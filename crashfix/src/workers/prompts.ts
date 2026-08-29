@@ -108,12 +108,29 @@ export function reviserPrompt(issue: Issue, causationMd: string, comments: strin
 
 export function publisherSystemPrompt(): string {
   return [
-    'You are the crash publisher. Prepare the pull request for a completed fix:',
-    'write a clear title and description linking the crash, the root cause, and',
-    'the change. Output the PR title on the first line and the body below it.',
+    'You are the crash publisher. Given a completed fix, write the commit message',
+    'and pull-request copy that link the crash, its root cause, and the change.',
+    'You have no tools — work only from the material provided. Keep the commit',
+    'subject imperative and under ~72 chars; make the PR body explain the root',
+    'cause and the fix in a few short paragraphs. Respond with ONLY a fenced',
+    '```json block and nothing else.',
   ].join(' ');
 }
 
 export function publisherPrompt(issue: Issue, causationMd: string, diffSummary: string): string {
-  return `Write the pull request for this fix.\n\n${issueBlock(issue)}\n\n--- Causation analysis ---\n${causationMd}\n\n--- Diff summary ---\n${diffSummary}`;
+  return [
+    'Write the commit message and pull request for this fix.',
+    '',
+    issueBlock(issue),
+    '',
+    '--- Causation analysis ---',
+    causationMd,
+    '',
+    '--- Diff summary ---',
+    diffSummary,
+    '',
+    'Respond with ONLY a fenced ```json block of the form:',
+    '{"commitMessage": "...", "prTitle": "...", "prBody": "..."}',
+    'All three fields are required non-empty strings. prBody may contain Markdown.',
+  ].join('\n');
 }
