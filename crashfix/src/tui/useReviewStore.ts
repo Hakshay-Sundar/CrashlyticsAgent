@@ -33,6 +33,7 @@ export type Action =
   | { type: 'submitComment' }
   | { type: 'startReject' }
   | { type: 'submitReject' }
+  | { type: 'cancel' }
   | { type: 'setDraft'; draft: string }
   | { type: 'finalize' };
 
@@ -61,6 +62,8 @@ export function reduce(s: StoreState, a: Action): StoreState {
       return { ...s, mode: 'comment', draft: '' };
     case 'startReject':
       return { ...s, mode: 'reject', draft: '' };
+    case 'cancel':
+      return { ...s, mode: 'list', draft: '' };
     case 'setDraft':
       return { ...s, draft: a.draft };
     case 'submitComment':

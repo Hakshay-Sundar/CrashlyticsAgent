@@ -19,9 +19,7 @@ export function ReviewApp({ items, onDone }: { items: ReviewItem[]; onDone: (dec
       } else if (key.backspace || key.delete) {
         dispatch({ type: 'setDraft', draft: state.draft.slice(0, -1) });
       } else if (key.escape) {
-        dispatch({ type: 'setDraft', draft: '' });
-        dispatch({ type: 'tab' });
-        dispatch({ type: 'tab' });
+        dispatch({ type: 'cancel' });
       } else if (input && !key.ctrl && !key.meta) {
         dispatch({ type: 'setDraft', draft: state.draft + input });
       }
@@ -35,7 +33,8 @@ export function ReviewApp({ items, onDone }: { items: ReviewItem[]; onDone: (dec
     else if (input === 'r') dispatch({ type: 'startReject' });
     else if (input === 's') dispatch({ type: 'skip' });
     else if (input === 'q') {
-      onDone([...reduce(state, { type: 'finalize' }).decisions.values()]);
+      const finalized = reduce(state, { type: 'finalize' }).decisions;
+      onDone(items.map((it) => finalized.get(it.record.issue.id)!));
       exit();
     }
   });

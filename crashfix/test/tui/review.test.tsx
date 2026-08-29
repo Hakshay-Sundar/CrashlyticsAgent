@@ -31,6 +31,16 @@ describe('review store reduce', () => {
     expect(s.decisions.get('i1')).toEqual({ issueId: 'i1', verdict: 'reject', comments: 'not a real fix' });
   });
 
+  it('cancel exits comment mode without recording a decision', () => {
+    let s = initialState(items);
+    s = reduce(s, { type: 'startComment' });
+    s = reduce(s, { type: 'setDraft', draft: 'half-written note' });
+    s = reduce(s, { type: 'cancel' });
+    expect(s.mode).toBe('list');
+    expect(s.draft).toBe('');
+    expect(s.decisions.has('i1')).toBe(false);
+  });
+
   it('finalize fills untouched items with skip', () => {
     let s = initialState(items);
     s = reduce(s, { type: 'approve' });          // i1
