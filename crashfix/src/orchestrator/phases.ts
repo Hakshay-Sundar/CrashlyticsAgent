@@ -340,13 +340,17 @@ export async function rejectIssue(d: Deps, state: RunState, issueId: string): Pr
   if (!rec) throw new Error(`rejectIssue: unknown issue ${issueId}`);
 
   const slot = heldSlot(d, rec);
-  const repoNames = rec.affectedRepos.length ? rec.affectedRepos : repoList(d).map((r) => r.name);
   if (slot) {
-    for (const name of repoNames) {
-      const dir = slot.repoDirs[name];
-      if (dir) await d.git.deleteBranch(dir, rec.branch);
-    }
+    await d.pool.discardSlotBranch(slot, rec.branch);
     releaseSlot(d, rec, slot);
+  } else {
+    // No held slot (resume edge case): best-effort delete in the main checkout.
+    const repos = repoList(d);
+    const names = rec.affectedRepos.length ? rec.affectedRepos : repos.map((r) => r.name);
+    for (const name of names) {
+      const r = repos.find((x) => x.name === name);
+      if (r) await d.git.deleteBranch(r.path === '.' ? d.root : join(d.root, r.path), rec.branch);
+    }
   }
 
   rec.status = 'REJECTED';

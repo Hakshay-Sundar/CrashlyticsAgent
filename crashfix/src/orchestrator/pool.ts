@@ -15,6 +15,10 @@ export interface WorktreePool {
   acquire(): Promise<Slot>;
   reset(slot: Slot, branch: string): Promise<void>;
   release(slot: Slot): void;
+  // Move the slot's worktrees off `branch` (back onto the pool-slot branch) and
+  // delete `branch` in every repo. Called on reject so the abandoned issue
+  // branch can't survive into a later wave that re-acquires this slot.
+  discardSlotBranch(slot: Slot, branch: string): Promise<void>;
   quarantine(slot: Slot): Promise<void>;
   destroy(): Promise<void>;
   readonly size: number;
@@ -103,6 +107,19 @@ export function createPool(o: PoolOpts): WorktreePool {
       const w = waiters.shift();
       if (w) w(slot);
       else free.push(slot);
+    },
+
+    async discardSlotBranch(slot, branch) {
+      for (const r of o.repos) {
+        const dir = repoWorktreeDir(slot.n, r);
+        try {
+          await o.git.checkoutNewBranch(dir, slotBranch(slot.n), o.base);
+          await o.git.deleteBranch(dir, branch);
+        } catch (e) {
+          o.log.warn(`discardSlotBranch: ${r.name} ${branch}`, e);
+        }
+      }
+      slot.branch = undefined;
     },
 
     async quarantine(slot) {

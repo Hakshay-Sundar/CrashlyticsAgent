@@ -1,9 +1,10 @@
 // End-to-end integration test: drives runPipeline with REAL git + real pool +
 // real state/report, and fakes only the outside world (connector, workers,
 // PR provider/http, review TUI). Three issues across two waves exercise the
-// three terminal paths: pushed, revised-then-pushed, rejected.
+// three terminal paths: pushed, revised-then-pushed, rejected. The rejected
+// issue sits in wave 0 so the following wave proves its slot is reusable.
 import { describe, it, expect } from 'vitest';
-import { readFileSync, existsSync, writeFileSync } from 'node:fs';
+import { readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { realGit as git } from '../../src/git.js';
 import { runPipeline } from '../../src/orchestrator/run.js';
@@ -17,12 +18,14 @@ const mk = (id: string, over = {}) => ({
 });
 
 describe('crashfix e2e', () => {
-  it('runs 3 issues: one pushed, one revised+pushed, one rejected', async () => {
+  it('runs 3 issues: one rejected (wave 0), one pushed, one revised+pushed (wave 1)', async () => {
     const { root } = makeNestedRepos();
     seedSource(root); // root/B/app/Feature.kt with a null-deref, committed in repo B
 
+    // waveSize 2 over [i3, i1, i2] -> wave 0 = [i3 (reject), i1 (push)], wave 1 = [i2].
     // i2 is approved-with-comments the FIRST time it is reviewed, then plain-approved
-    // once the reviser has re-run — so it lands PUSHED via the revision loop.
+    // once the reviser has re-run — so it lands PUSHED via the revision loop, and its
+    // slot is one freed by wave 0 (proves reject/publish slot release + reuse).
     const seen: Record<string, number> = {};
     const decide = (id: string) => {
       seen[id] = (seen[id] ?? 0) + 1;
@@ -46,7 +49,7 @@ describe('crashfix e2e', () => {
         git, log: nolog,
         connector: {
           key: 'fake',
-          fetchTopIssues: async () => { fetchCalls++; return [mk('i1'), mk('i2'), mk('i3')]; },
+          fetchTopIssues: async () => { fetchCalls++; return [mk('i3'), mk('i1'), mk('i2')]; },
         },
         runWorker: async (o: any) => {
           if (o.worker === 'analyzer') {
@@ -86,15 +89,17 @@ describe('crashfix e2e', () => {
     expect(state.issues['i3'].notes).toMatch(/wrong layer/);
     expect(state.phase).toBe('done');
 
-    // the reviser actually re-ran and got re-reviewed (wave1 review + wave1 re-review + wave2 review)
+    // reviews: wave0 [i3,i1] + wave1 [i2] + wave1 re-review of i2 = 3
     expect(reviewRound).toBe(3);
     expect(seen.i2).toBe(2);
     expect(fetchCalls).toBe(1);
     expect(state.waveOrder.length).toBe(2);
+    expect(state.waveOrder[0]).toEqual(['i3', 'i1']);
+    expect(state.waveOrder[1]).toEqual(['i2']);
 
     // real PRs opened for the two pushed issues, none for the rejected one
     expect(state.issues['i1'].prUrls.B).toMatch(/^https:\/\/gh\//);
-    expect(state.issues['i2'].prUrls.B).toMatch(/^https:\/\/gh\//);
+    expect(state.issues['i2'].prUrls.B).toMatch(/^https:\/\/gh\//); // wave-1 issue on a reused slot
     expect(state.issues['i3'].prUrls).toEqual({});
 
     // durable master report carries PR url + the rejection
@@ -106,7 +111,8 @@ describe('crashfix e2e', () => {
     const wt = await git.worktreeList(root);
     expect(wt.some((w) => w.path.includes('slot-'))).toBe(false);
 
-    // i3's fix branch is gone from repo B
+    // i3's fix branch was deleted from repo B when it was rejected in wave 0
+    // (not merely at pool teardown), so it never leaked into wave 1
     const i3Branch = state.issues['i3'].branch;
     await expect(git.revParse(join(root, 'B'), i3Branch)).rejects.toThrow();
   });

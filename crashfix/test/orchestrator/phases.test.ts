@@ -19,7 +19,7 @@ function fakeDeps(root: string, overrides: Record<string, unknown> = {}) {
     repoDirs: { A: join(root, '.crashfix/worktrees/slot-0') },
     branch: undefined as string | undefined,
   };
-  return {
+  const d: any = {
     root, base: 'main', log: nolog, exec: async () => ({ code: 0, output: '' }),
     cfg: {
       waveSize: 2, validation: 'none', buildTimeoutSec: 60,
@@ -38,6 +38,9 @@ function fakeDeps(root: string, overrides: Record<string, unknown> = {}) {
       reset: async (s: any, b: string) => { s.branch = b; },
       release() {},
       slotByNumber: () => slot,
+      discardSlotBranch: async (_s: any, b: string) => {
+        for (const dir of Object.values(slot.repoDirs)) await d.git.deleteBranch(dir, b);
+      },
     },
     sem: { run: (f: any) => f() },
     connector: { key: 'fake', fetchTopIssues: async () => [issue('i1'), issue('i2'), issue('i3')] },
@@ -49,7 +52,8 @@ function fakeDeps(root: string, overrides: Record<string, unknown> = {}) {
     http: async () => ({ status: 200, json: {} }),
     launchReview: async (items: any[]) => items.map((i) => ({ issueId: i.record.issue.id, verdict: 'approve' })),
     ...overrides,
-  } as any;
+  };
+  return d;
 }
 
 const seedIssue = (state: any, id: string, over: Record<string, unknown> = {}) => {

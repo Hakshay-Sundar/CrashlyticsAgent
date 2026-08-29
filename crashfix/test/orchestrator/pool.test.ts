@@ -35,6 +35,24 @@ describe('WorktreePool', () => {
     await pool.destroy();
   });
 
+  it('discardSlotBranch drops the issue branch in every repo and parks the slot', async () => {
+    const base = await git.currentBranch(root);
+    const pool = createPool({ root, repos, base, waveSize: 1, cleanExcludes: [], git, log: nolog });
+    await pool.create();
+    const slot = await pool.acquire();
+    await pool.reset(slot, 'crashfix/x');
+    expect(await git.currentBranch(slot.dir)).toBe('crashfix/x');
+
+    await pool.discardSlotBranch(slot, 'crashfix/x');
+
+    expect(slot.branch).toBeUndefined();
+    for (const dir of Object.values(slot.repoDirs)) {
+      expect(await git.currentBranch(dir)).toBe('crashfix/pool-slot-0');
+      await expect(git.revParse(dir, 'crashfix/x')).rejects.toThrow();
+    }
+    await pool.destroy();
+  });
+
   it('create() is idempotent when a slot worktree already exists', async () => {
     const base = await git.currentBranch(root);
     const pool = createPool({ root, repos, base, waveSize: 1, cleanExcludes: [], git, log: nolog });
