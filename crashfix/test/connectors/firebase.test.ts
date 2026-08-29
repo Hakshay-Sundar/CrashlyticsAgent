@@ -52,6 +52,26 @@ describe('firebaseConnector', () => {
     expect(issues[0].sampleEventUrl).toBe('');
   });
 
+  it('normalizes non-canonical type casing/synonyms instead of dropping', async () => {
+    const raw = { ...JSON.parse(goodJson).issues[0], id: 'UP', type: 'ANR' };
+    const c = firebaseFactory(deps('```json\n' + JSON.stringify({ issues: [raw] }) + '\n```'));
+    const issues = await c.fetchTopIssues({ limit: 25, filters: { ...noFilters } });
+    expect(issues).toHaveLength(1);
+    expect(issues[0].type).toBe('anr');
+  });
+
+  it('throws a wrapped error on a malformed json fence', async () => {
+    const c = firebaseFactory(deps('```json\n{ not valid json }\n```'));
+    await expect(c.fetchTopIssues({ limit: 5, filters: { ...noFilters } }))
+      .rejects.toThrow(/malformed json block/i);
+  });
+
+  it('returns [] when the response has no issues array', async () => {
+    const c = firebaseFactory(deps('```json\n{"data":[]}\n```'));
+    const issues = await c.fetchTopIssues({ limit: 5, filters: { ...noFilters } });
+    expect(issues).toEqual([]);
+  });
+
   it('falls back to a plain fenced block when no json tag is present', async () => {
     const c = firebaseFactory(deps('```\n' + goodJson + '\n```'));
     const issues = await c.fetchTopIssues({ limit: 25, filters: { ...noFilters } });
