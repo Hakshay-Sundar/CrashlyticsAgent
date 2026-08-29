@@ -285,6 +285,18 @@ export async function publishApproved(d: Deps, state: RunState, issueId: string)
   try {
     if (!slot) throw new Error('no held slot for publish');
     const affected = repoList(d).filter((r) => rec.affectedRepos.includes(r.name));
+
+    if (affected.length === 0) {
+      // ponytail: solver touched no repo — nothing to commit/push/PR. Treat as
+      // done rather than invoking the publisher worker on an empty changeset.
+      rec.status = 'PUSHED';
+      rec.notes = rec.notes ?? 'no code changes to publish';
+      released = true;
+      releaseSlot(d, rec, slot);
+      persist(d, state);
+      return;
+    }
+
     const causation = readArtifact(d, rec.reportPath ?? `reports/${issueId}.md`);
     const diffSummary = readArtifact(d, rec.reviewPath ?? `reviews/${issueId}.md`);
 
