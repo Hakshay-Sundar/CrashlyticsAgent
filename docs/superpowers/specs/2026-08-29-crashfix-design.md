@@ -224,8 +224,10 @@ interface Issue {
   - `Diff`: syntax-highlighted, grouped by repo, scrollable.
 - **Keys:** `↑↓` navigate · `a` approve · `c` approve + comment (opens `$EDITOR`) ·
   `r` reject (prompts reason) · `s` skip · `d` / `tab` toggle pane · `q` save + quit.
+- Skipped issues stay `IN_REVIEW` and are re-presented on the next TUI open
+  (`resume` or post-revision). The run does not finish while any issue is `IN_REVIEW`.
 - On quit, decisions persist. `crashfix resume` runs revise / publish / reject, then
-  re-opens the TUI if revision produced new items to review.
+  re-opens the TUI if any issue is still `IN_REVIEW` or revision produced new items.
 
 ## 10. Error handling
 
