@@ -19,4 +19,17 @@ describe('Semaphore', () => {
     await expect(sem.run(async () => { throw new Error('boom'); })).rejects.toThrow('boom');
     await expect(sem.run(async () => 'ok')).resolves.toBe('ok');
   });
+
+  it('inFlight is readable and reflects running count', async () => {
+    const sem = new Semaphore(2);
+    expect(sem.inFlight).toBe(0);
+    const task = sem.run(async () => {
+      expect(sem.inFlight).toBe(1);
+      await new Promise((r) => setTimeout(r, 20));
+    });
+    await new Promise((r) => setTimeout(r, 5));
+    expect(sem.inFlight).toBe(1);
+    await task;
+    expect(sem.inFlight).toBe(0);
+  });
 });
