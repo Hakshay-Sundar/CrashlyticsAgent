@@ -1,0 +1,50 @@
+{
+  "firebase": {
+    "projectId": "my-firebase-project",
+    "appId": "1:123456789:android:abcdef0123456789"
+  },
+  "issueSource": "firebase",
+  "connectors": {
+    "firebase": {
+      "mcp": {
+        "command": "npx",
+        "args": ["-y", "firebase-tools", "experimental:mcp"],
+        "env": {}
+      }
+    }
+  },
+  "repos": [
+    {
+      "name": "my-app",
+      "path": "/path/to/my-app",
+      "remote": "origin",
+      "provider": "github",
+      "buildCommand": "./gradlew build"
+    }
+  ],
+  "concurrency": 4,
+  "waveSize": 5,
+  "validation": "build",
+  "buildParallelism": 2,
+  "buildTimeoutSec": 1800,
+  "cleanExcludes": [".gradle/", "local.properties", "*.iml"],
+  "models": {
+    "orchestrator": "opus",
+    "fetcher": "haiku",
+    "triager": "haiku",
+    "analyzer": "opus",
+    "solver": "sonnet",
+    "reviser": "sonnet",
+    "publisher": "haiku",
+    "reporter": "haiku"
+  },
+  "defaults": {
+    "limit": 25
+  },
+  "filters": {
+    "minAppVersion": null,
+    "type": null,
+    "minEventCount": null,
+    "since": null
+  }
+}
