@@ -43,6 +43,16 @@ describe('WorktreePool', () => {
     await pool.destroy();
   });
 
+  it('slotByNumber returns the created slot, undefined otherwise', async () => {
+    const base = await git.currentBranch(root);
+    const pool = createPool({ root, repos, base, waveSize: 2, cleanExcludes: [], git, log: nolog });
+    await pool.create();
+    const s = await pool.acquire();
+    expect(pool.slotByNumber(s.n)).toBe(s);
+    expect(pool.slotByNumber(99)).toBeUndefined();
+    await pool.destroy();
+  });
+
   it('acquire blocks until a slot is released', async () => {
     const base = await git.currentBranch(root);
     const pool = createPool({ root, repos, base, waveSize: 1, cleanExcludes: [], git, log: nolog });

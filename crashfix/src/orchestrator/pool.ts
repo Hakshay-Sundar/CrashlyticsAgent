@@ -18,6 +18,9 @@ export interface WorktreePool {
   quarantine(slot: Slot): Promise<void>;
   destroy(): Promise<void>;
   readonly size: number;
+  // Look up an already-created slot by its number — used to recover the slot
+  // held across review/revise/publish phases (tracked as IssueRecord.slot).
+  slotByNumber(n: number): Slot | undefined;
 }
 
 export interface PoolOpts {
@@ -70,6 +73,10 @@ export function createPool(o: PoolOpts): WorktreePool {
         all.push(slot);
         free.push(slot);
       }
+    },
+
+    slotByNumber(n) {
+      return all.find((s) => s.n === n);
     },
 
     async acquire() {
