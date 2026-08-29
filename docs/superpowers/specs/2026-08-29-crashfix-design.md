@@ -19,7 +19,6 @@ with the dev's existing Claude credentials via the Claude Agent SDK.
 - Not a Claude Code plugin subagent (subagents cannot spawn subagents; we need a real
   orchestrator). An optional thin `/crashfix` slash command may shell out to the binary.
 - Not a CI service. `--yes` CI mode exists but the product is a local dev tool.
-- Does not build the full Android app. Validation is lint-only by default.
 - Does not merge PRs or touch remote main branches.
 
 ## 3. Architecture
@@ -49,7 +48,7 @@ Runs with `cwd` = the Android/KMP repo root. The repo(s) are the work substrate.
 | fetcher | Haiku | pull top-N issues from connector, normalize, apply filters | none |
 | triager | Haiku | slug + branch name + priority ordering from issue metadata | none |
 | analyzer | Opus | stack trace → source, root cause + causation report md | worktree (read-only) |
-| solver | Sonnet 5 | edit code, run lint, render diff, write review packet | worktree (read-write) |
+| solver | Sonnet 5 | edit code, run validation (§6a), render diff, write review packet | worktree (read-write) |
 | reviser | Sonnet 5 | re-solve given human comments | worktree (read-write) |
 | publisher | Haiku | commit message + PR body from causation report, push, open PR | worktree |
 | reporter | Haiku | maintain master report md | `.crashfix/` |
@@ -79,8 +78,13 @@ publish   → PARTIALLY_PUSHED (some repos landed, some failed)
 3. **Analyze** — fan out analyzer (concurrency cap), each writes
    `.crashfix/reports/<id>.md`. Reporter links all into `.crashfix/report.md`.
    Analyzer may return `UNFIXABLE` → skip solve, record in report.
-4. **Solve** — fan out solver, each edits its worktree, runs lint, writes
-   `.crashfix/reviews/<id>.md` (summary + causation link + `git diff` grouped by repo).
+4. **Solve** — fan out solver (concurrency cap), each edits its worktree, then runs
+   validation (§6a). The validate step drains through a global semaphore
+   (`buildParallelism`, default 2) — solve edits run at concurrency N, but at most 2
+   gradle builds execute at once. The model is idle during a build (no token cost),
+   so a worker simply awaits its build slot. Solver then writes
+   `.crashfix/reviews/<id>.md` (summary + causation link + validation result +
+   `git diff` grouped by repo).
 5. **Review gate** — launch TUI. Human walks issues: approve / approve+comment /
    reject / skip. Decisions persisted to `state.json`. Ctrl-C / `q` safe here.
 6. **Revise loop** — issues with comments → reviser re-runs on the same worktree →
@@ -138,6 +142,24 @@ across affected repos.
 **Partial push failure:** issue → `PARTIALLY_PUSHED`; master report shows which repos
 landed. No auto-rollback — human decides.
 
+## 6a. Validation
+
+After a solver edits its worktree it validates the fix. Default: **full build**.
+
+- `validation`: `build` (default) | `lint` | `none`.
+- `build` runs each affected repo's configured build command (e.g.
+  `./gradlew :app:assembleDebug` or a KMP `compileKotlin` task) in the worktree.
+- `buildParallelism` (default `2`): global semaphore. Solve *edits* run at
+  `concurrency` (4–8); at most `buildParallelism` builds run concurrently. The 4
+  parallel solve workers reach their build phase at different times, so a 2-slot
+  queue keeps machine load bounded without much stall. A worker `await`s its slot —
+  no LLM tokens are spent while a build runs.
+- Build command per repo comes from config (`repos[].buildCommand`), falling back to
+  autodetected gradle wrapper + module.
+- Outcome (`pass` / `fail` + captured output tail) goes into the review packet and
+  the master report. A failing build does not block review — the human still decides
+  (see §10).
+
 ## 7. Config — `crashfix.config.json`
 
 ```jsonc
@@ -149,9 +171,10 @@ landed. No auto-rollback — human decides.
       "mcp": { "command": "npx", "args": ["-y", "firebase-tools", "experimental:mcp"] }
     }
   },
-  "repos": [ /* §6 */ ],
+  "repos": [ /* §6; each may add "buildCommand": "./gradlew :app:assembleDebug" */ ],
   "concurrency": 4,                 // 1..8
-  "validation": "lint",            // lint | none | test
+  "validation": "build",           // build | lint | none
+  "buildParallelism": 2,           // max concurrent builds across worktrees
   "models": {
     "orchestrator": "claude-opus-4-8",
     "fetcher": "claude-haiku-4-5",
@@ -220,7 +243,7 @@ interface Issue {
   (`● analyzed`, `✎ solved`, `▸ in review`, `✓ approved`, `✗ rejected`, `⚠ failed`),
   sorted by priority from the triager.
 - **Right pane:** tabs —
-  - `Summary`: causation, root cause, affected repos, lint result.
+  - `Summary`: causation, root cause, affected repos, build/validation result.
   - `Diff`: syntax-highlighted, grouped by repo, scrollable.
 - **Keys:** `↑↓` navigate · `a` approve · `c` approve + comment (opens `$EDITOR`) ·
   `r` reject (prompts reason) · `s` skip · `d` / `tab` toggle pane · `q` save + quit.
@@ -236,8 +259,12 @@ interface Issue {
 - **Worker retries:** 1 retry on transient API errors (429 / 500), then `FAILED`.
 - **Analyzer `UNFIXABLE`:** valid outcome — report row `NOT FIXED (unfixable: <reason>)`,
   no worktree created.
-- **Lint failure in solver:** solver gets 1 self-correction pass; if still failing, the
-  review packet is flagged `⚠ lint failing` and the human still decides.
+- **Validation (build/lint) failure in solver:** solver gets 1 self-correction pass
+  (re-reads build output, edits again, re-queues for a build slot); if still failing,
+  the review packet is flagged `⚠ build failing` with the output tail and the human
+  still decides.
+- **Build timeout:** per-build wall-clock cap (`buildTimeoutSec`, default 1800);
+  on timeout the validation result is `fail (timeout)`.
 - **Dirty base repo:** `run` refuses if any repo has uncommitted changes to files it
   would touch; `--force` overrides.
 - **Pre-existing worktree / branch** (prior aborted run): detected; human offered reuse
@@ -250,7 +277,9 @@ interface Issue {
 
 - **Unit (vitest):** config load/validate, repo-map discovery, file→repo routing, diff
   grouping, slug / branch naming, state-machine transitions, connector normalization,
-  PR cross-link body patching. Git and the SDK are behind interfaces with fakes.
+  PR cross-link body patching, build-queue semaphore (never exceeds
+  `buildParallelism`, releases slot on error/timeout). Git and the SDK are behind
+  interfaces with fakes.
 - **Integration:** temp dir containing nested throwaway git repos + fixture Crashlytics
   JSON + a stub connector; run the pipeline through `--dry-run`, and through solve with
   a scripted fake solver; assert on worktrees, report files, and `state.json`.
@@ -270,6 +299,7 @@ crashfix/
       run.ts                  state-machine loop
       phases/                 fetch.ts analyze.ts solve.ts review.ts revise.ts publish.ts reject.ts
       worktrees.ts            coordinated set create / remove
+      buildqueue.ts           validation semaphore (buildParallelism)
       reposcan.ts             init discovery
     workers/
       spawn.ts                SDK query wrapper — model resolve, cwd scope, retry
