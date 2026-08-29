@@ -12,7 +12,19 @@ export function ReviewApp({ items, onDone }: { items: ReviewItem[]; onDone: (dec
   const { exit } = useApp();
   const current = state.items[state.cursor];
 
+  const quit = () => {
+    const finalized = reduce(state, { type: 'finalize' }).decisions;
+    onDone(items.map((it) => finalized.get(it.record.issue.id)!));
+    exit();
+  };
+
   useInput((input, key) => {
+    // ink runs with exitOnCtrlC:false and raw mode swallows SIGINT, so Ctrl-C
+    // must be handled here or the review phase can't be interrupted at all.
+    if (key.ctrl && input === 'c') {
+      quit();
+      return;
+    }
     if (state.mode !== 'list') {
       if (key.return) {
         dispatch(state.mode === 'comment' ? { type: 'submitComment' } : { type: 'submitReject' });
@@ -27,16 +39,12 @@ export function ReviewApp({ items, onDone }: { items: ReviewItem[]; onDone: (dec
     }
     if (key.upArrow) dispatch({ type: 'up' });
     else if (key.downArrow) dispatch({ type: 'down' });
-    else if (key.tab) dispatch({ type: 'tab' });
-    else if (input === 'a') dispatch({ type: 'approve' });
-    else if (input === 'c') dispatch({ type: 'startComment' });
-    else if (input === 'r') dispatch({ type: 'startReject' });
-    else if (input === 's') dispatch({ type: 'skip' });
-    else if (input === 'q') {
-      const finalized = reduce(state, { type: 'finalize' }).decisions;
-      onDone(items.map((it) => finalized.get(it.record.issue.id)!));
-      exit();
-    }
+    else if (key.tab && !key.ctrl) dispatch({ type: 'tab' });
+    else if (input === 'a' && !key.ctrl) dispatch({ type: 'approve' });
+    else if (input === 'c' && !key.ctrl) dispatch({ type: 'startComment' });
+    else if (input === 'r' && !key.ctrl) dispatch({ type: 'startReject' });
+    else if (input === 's' && !key.ctrl) dispatch({ type: 'skip' });
+    else if (input === 'q' && !key.ctrl) quit();
   });
 
   let approved = 0;

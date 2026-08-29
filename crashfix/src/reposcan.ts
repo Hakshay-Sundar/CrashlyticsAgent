@@ -3,7 +3,7 @@ import { join, relative } from 'node:path';
 import type { RepoInfo } from './types.js';
 import type { Git } from './git.js';
 
-const SKIP = new Set(['node_modules', '.git', 'build', '.gradle', 'dist', '.idea']);
+const SKIP = new Set(['node_modules', '.git', 'build', '.gradle', 'dist', '.idea', '.crashfix']);
 
 export function inferProvider(url: string): RepoInfo['provider'] {
   if (/github\.com/.test(url)) return 'github';

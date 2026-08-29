@@ -71,6 +71,61 @@ describe('WorktreePool', () => {
     await pool.destroy();
   });
 
+  it('reserve pulls a specific slot out of the free list (or undefined)', async () => {
+    const base = await git.currentBranch(root);
+    const pool = createPool({ root, repos, base, waveSize: 2, cleanExcludes: [], git, log: nolog });
+    await pool.create();
+    const s1 = pool.reserve(1);
+    expect(s1?.n).toBe(1);
+    expect(pool.reserve(1)).toBeUndefined();       // already pulled
+    const s0 = await pool.acquire();
+    expect(s0.n).toBe(0);                            // reserve(1) didn't touch slot 0
+    await pool.destroy();
+  });
+
+  it('reset rejects (does not swallow) when git fails, so the caller can bail', async () => {
+    const fakeGit: any = {
+      worktreeList: async () => [],
+      worktreeAdd: async () => {},
+      worktreeRemove: async () => {},
+      checkoutNewBranch: async () => { throw new Error('checkout boom'); },
+      resetHard: async () => {},
+      clean: async () => {},
+      deleteBranch: async () => {},
+    };
+    const pool = createPool({ root, repos, base: 'main', waveSize: 1, cleanExcludes: [], git: fakeGit, log: nolog });
+    await pool.create();
+    const slot = await pool.acquire();
+    await expect(pool.reset(slot, 'crashfix/x')).rejects.toThrow('checkout boom');
+  });
+
+  it('a slot whose reset AND quarantine rebuild both fail is dropped from rotation', async () => {
+    let failAdd = false;
+    const fakeGit: any = {
+      worktreeList: async () => [],
+      worktreeAdd: async () => { if (failAdd) throw new Error('worktree add boom'); },
+      worktreeRemove: async () => {},
+      checkoutNewBranch: async () => { throw new Error('checkout boom'); },
+      resetHard: async () => {},
+      clean: async () => {},
+      deleteBranch: async () => {},
+    };
+    const pool = createPool({ root, repos, base: 'main', waveSize: 2, cleanExcludes: [], git: fakeGit, log: nolog });
+    await pool.create();
+    failAdd = true;                            // quarantine's rebuild will now throw
+    const bad = await pool.acquire();
+    const sizeBefore = pool.size;
+    await expect(pool.reset(bad, 'crashfix/x')).rejects.toThrow();
+    expect(pool.size).toBe(sizeBefore - 1);
+    expect(pool.slotByNumber(bad.n)).toBeUndefined();
+
+    // acquire must never hand the dropped slot back
+    const a = await pool.acquire();
+    expect(a.n).not.toBe(bad.n);
+    pool.release(a);
+    expect(pool.reserve(bad.n)).toBeUndefined();
+  });
+
   it('acquire blocks until a slot is released', async () => {
     const base = await git.currentBranch(root);
     const pool = createPool({ root, repos, base, waveSize: 1, cleanExcludes: [], git, log: nolog });

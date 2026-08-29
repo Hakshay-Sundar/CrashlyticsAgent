@@ -21,6 +21,10 @@ export interface WorktreePool {
   discardSlotBranch(slot: Slot, branch: string): Promise<void>;
   quarantine(slot: Slot): Promise<void>;
   destroy(): Promise<void>;
+  // Pull the slot with number `n` OUT of the free list (or undefined if it is
+  // not currently free). Used on resume to re-claim a slot that state.json
+  // records as held by a live issue, so it can't also be handed out fresh.
+  reserve(n: number): Slot | undefined;
   readonly size: number;
   // Look up an already-created slot by its number — used to recover the slot
   // held across review/revise/publish phases (tracked as IssueRecord.slot).
@@ -89,6 +93,11 @@ export function createPool(o: PoolOpts): WorktreePool {
       return new Promise<Slot>((res) => waiters.push(res));
     },
 
+    reserve(n) {
+      const i = free.findIndex((s) => s.n === n);
+      return i === -1 ? undefined : free.splice(i, 1)[0];
+    },
+
     async reset(slot, branch) {
       try {
         for (const dir of Object.values(slot.repoDirs)) {
@@ -100,10 +109,14 @@ export function createPool(o: PoolOpts): WorktreePool {
       } catch (e) {
         o.log.warn(`slot ${slot.n} reset failed, quarantining`, e);
         await pool.quarantine(slot);
+        // Rethrow: the caller (runOneIssue) must record this as a setup failure
+        // and stop — the worktree is not on `branch` and analysing it is garbage.
+        throw e;
       }
     },
 
     release(slot) {
+      if (!all.includes(slot)) return; // quarantined out of rotation — don't resurrect
       const w = waiters.shift();
       if (w) w(slot);
       else free.push(slot);
@@ -133,6 +146,12 @@ export function createPool(o: PoolOpts): WorktreePool {
         slot.branch = undefined;
       } catch (e) {
         size = Math.max(0, size - 1);
+        // Rebuild failed — the slot has no usable worktrees. Drop it from
+        // rotation entirely so acquire()/reserve() can never hand it out again.
+        for (const list of [free, all]) {
+          const i = list.indexOf(slot);
+          if (i !== -1) list.splice(i, 1);
+        }
         o.log.warn(`slot ${slot.n} unrecoverable; pool shrunk to ${size}`, e);
       }
     },

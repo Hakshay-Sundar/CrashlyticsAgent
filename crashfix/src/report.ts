@@ -16,12 +16,13 @@ export function renderReport(state: RunState): string {
   const summary = ['## Summary', '', ...Object.entries(counts).map(([k, v]) => `- ${k}: ${v}`), ''];
   const header = '| Issue | Type | Events | Users | Status | Branch | Slot | Repos | Reports | PRs | Build | Notes |';
   const sep = '|' + '---|'.repeat(12);
+  const cell = (s: unknown) => String(s ?? '').replace(/\|/g, '\\|').replace(/\n/g, ' ');
   const rows = recs.map((r) => {
     const prs = Object.entries(r.prUrls).map(([repo, url]) => `[${repo}](${url})`).join(' ');
     const reports = [r.reportPath && `[analysis](${r.reportPath})`, r.reviewPath && `[review](${r.reviewPath})`]
       .filter(Boolean).join(' ');
     const build = r.buildResult ? (r.buildResult.ok ? 'pass' : 'fail') : '';
-    return `| ${r.issue.id} — ${r.issue.title} | ${r.issue.type} | ${r.issue.eventCount} | ${r.issue.userCount} | ${r.status} | ${r.branch ?? ''} | ${r.slot ?? ''} | ${r.affectedRepos.join(',')} | ${reports} | ${prs} | ${build} | ${r.notes ?? ''} |`;
+    return `| ${cell(r.issue.id)} — ${cell(r.issue.title)} | ${cell(r.issue.type)} | ${r.issue.eventCount} | ${r.issue.userCount} | ${cell(r.status)} | ${cell(r.branch ?? '')} | ${r.slot ?? ''} | ${cell(r.affectedRepos.join(','))} | ${reports} | ${prs} | ${build} | ${cell(r.notes ?? '')} |`;
   });
   const detail = recs.map((r) =>
     `### ${r.issue.id} — ${r.issue.title}\n\n` +

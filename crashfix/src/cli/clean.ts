@@ -49,6 +49,17 @@ export async function cleanCommand(opts: { cwd: string; yes?: boolean }): Promis
       });
       await pool.create();
       await pool.destroy();
+
+      // pool.destroy() only clears the pool-slot branches; an interrupted run
+      // also leaves crashfix/<slug> fix branches. Delete those too (best-effort).
+      const repos = state.config.repos as RepoInfo[];
+      for (const rec of Object.values(state.issues)) {
+        if (!rec.branch) continue;
+        for (const r of repos) {
+          const repoDir = r.path === '.' ? cwd : join(cwd, r.path);
+          await realGit.deleteBranch(repoDir, rec.branch).catch(() => {});
+        }
+      }
     } catch (e) {
       console.warn(`git worktree teardown incomplete: ${(e as Error).message}`);
     }

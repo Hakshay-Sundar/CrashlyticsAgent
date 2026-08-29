@@ -128,6 +128,7 @@ export async function runOneIssue(d: Deps, state: RunState, issueId: string): Pr
   try {
     slot = await d.pool.acquire();
     held = true;
+    stage = 'setup';
     await d.pool.reset(slot, rec.branch);
     rec.slot = slot.n;
 
@@ -137,7 +138,9 @@ export async function runOneIssue(d: Deps, state: RunState, issueId: string): Pr
       slot,
       rec.issue,
     );
-    rec.reportPath = writeArtifact(d, `reports/${issueId}.md`, analysis.reportMarkdown);
+    // rec.slug (slugify output) — never the raw fetcher id, which is only
+    // z.string() and could carry `../` to escape .crashfix.
+    rec.reportPath = writeArtifact(d, `reports/${rec.slug}.md`, analysis.reportMarkdown);
 
     if (analysis.unfixable) {
       rec.status = 'UNFIXABLE';
@@ -159,7 +162,7 @@ export async function runOneIssue(d: Deps, state: RunState, issueId: string): Pr
       repoList(d),
       analysis.reportMarkdown,
     );
-    rec.reviewPath = writeArtifact(d, `reviews/${issueId}.md`, solve.reviewMarkdown);
+    rec.reviewPath = writeArtifact(d, `reviews/${rec.slug}.md`, solve.reviewMarkdown);
     rec.affectedRepos = solve.affectedRepos;
     rec.buildResult = solve.validation;
 
@@ -194,7 +197,7 @@ export async function reviewWave(d: Deps, state: RunState, waveIds: string[]): P
 
   const items: ReviewItem[] = targets.map((rec) => ({
     record: rec,
-    reviewMarkdown: readArtifact(d, rec.reviewPath ?? `reviews/${rec.issue.id}.md`),
+    reviewMarkdown: readArtifact(d, rec.reviewPath ?? `reviews/${rec.slug}.md`),
   }));
 
   const decisions = await d.launchReview(items);
@@ -246,7 +249,7 @@ export async function reviseAndReview(d: Deps, state: RunState, waveIds: string[
       const slot = heldSlot(d, rec);
       try {
         if (!slot) throw new Error('no held slot for revision');
-        const causation = readArtifact(d, rec.reportPath ?? `reports/${rec.issue.id}.md`);
+        const causation = readArtifact(d, rec.reportPath ?? `reports/${rec.slug}.md`);
         const result = await runReviser(
           solveDeps(d, d.cfg.models.reviser),
           slot,
@@ -255,7 +258,7 @@ export async function reviseAndReview(d: Deps, state: RunState, waveIds: string[
           causation,
           rec.decision?.comments ?? '',
         );
-        rec.reviewPath = writeArtifact(d, `reviews/${rec.issue.id}.md`, result.reviewMarkdown);
+        rec.reviewPath = writeArtifact(d, `reviews/${rec.slug}.md`, result.reviewMarkdown);
         rec.affectedRepos = result.affectedRepos;
         rec.buildResult = result.validation;
         rec.status = 'IN_REVIEW';
@@ -295,9 +298,21 @@ export async function publishApproved(d: Deps, state: RunState, issueId: string)
   let released = false;
   try {
     if (!slot) throw new Error('no held slot for publish');
+    // Safety net for a resume gone wrong (B2): if the worktree this slot points
+    // at is not on this issue's branch, publishing would push the wrong fix
+    // under this issue. Fail loudly instead.
+    if (slot.branch != null && slot.branch !== rec.branch) {
+      rec.status = 'FAILED';
+      rec.failureStage = 'publish';
+      rec.notes = 'slot/branch mismatch after resume';
+      released = true;
+      releaseSlot(d, rec, slot);
+      persist(d, state);
+      return;
+    }
     const affected = repoList(d).filter((r) => rec.affectedRepos.includes(r.name));
-    const causation = readArtifact(d, rec.reportPath ?? `reports/${issueId}.md`);
-    const diffSummary = readArtifact(d, rec.reviewPath ?? `reviews/${issueId}.md`);
+    const causation = readArtifact(d, rec.reportPath ?? `reports/${rec.slug}.md`);
+    const diffSummary = readArtifact(d, rec.reviewPath ?? `reviews/${rec.slug}.md`);
 
     const text = await runPublisherText(
       { runWorker: d.runWorker, model: d.cfg.models.publisher },

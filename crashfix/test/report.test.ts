@@ -31,6 +31,22 @@ describe('renderReport', () => {
     expect(md).toContain('human: not a real fix');
   });
 
+  it('pipe characters in title/notes are escaped so the table keeps its shape', () => {
+    const s = {
+      version: 1, currentWave: 0, waveOrder: [['x']], phase: 'wave',
+      issues: {
+        x: { issue: { id: 'x', title: 'a | b', type: 'crash', eventCount: 1, userCount: 1 },
+          status: 'FAILED', branch: 'crashfix/x', affectedRepos: [], prUrls: {}, notes: 'x | y' },
+      },
+    } as any;
+    const md = renderReport(s);
+    const row = md.split('\n').find((l) => l.includes('a \\| b'))!;
+    expect(row).toBeTruthy();
+    // 12 columns -> 13 unescaped pipes; the ones inside cells are backslash-escaped
+    expect((row.match(/(?<!\\)\|/g) ?? []).length).toBe(13);
+    expect(row).toContain('x \\| y');
+  });
+
   it('summary counts by status', () => {
     const md = renderReport(state);
     expect(md).toMatch(/PUSHED: 1/);

@@ -12,7 +12,9 @@ export class Semaphore {
   }
 
   async run<T>(fn: () => Promise<T>): Promise<T> {
-    if (this.avail <= 0) await new Promise<void>((res) => this.q.push(res));
+    // while, not if: a waiter woken by q.shift() must re-check — a synchronous
+    // run() can steal the freed permit before this microtask resumes.
+    while (this.avail <= 0) await new Promise<void>((res) => this.q.push(res));
     this.avail--; this.#inFlight++;
     try {
       return await fn();

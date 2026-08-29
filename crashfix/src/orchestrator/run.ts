@@ -8,11 +8,11 @@ import type { CrashfixConfig } from '../config.js';
 import { discoverRepos } from '../reposcan.js';
 import { writeReport } from '../report.js';
 import { loadState, newState, saveState } from '../state.js';
-import type { RepoInfo, RunState } from '../types.js';
+import type { IssueRecord, RepoInfo, RunState } from '../types.js';
 import { runAnalyzer } from '../workers/analyzer.js';
 import type { Deps } from './phases.js';
 import { fetchPhase, publishApproved, reviseAndReview, reviewWave, runOneIssue } from './phases.js';
-import { createPool } from './pool.js';
+import { createPool, type WorktreePool } from './pool.js';
 import { Semaphore } from './semaphore.js';
 
 export interface RunPipelineOptions {
@@ -32,6 +32,35 @@ const SKIP_SOLVE = new Set([
   'IN_REVIEW', 'NEEDS_REVISION', 'APPROVED',
   'PUSHED', 'PARTIALLY_PUSHED', 'REJECTED', 'UNFIXABLE', 'FAILED',
 ]);
+
+// Statuses that legitimately pin a pool slot across review/revise/publish.
+const LIVE_SLOT = new Set(['IN_REVIEW', 'NEEDS_REVISION', 'APPROVED']);
+
+/**
+ * Resume: re-claim every slot that state.json records as held by a live issue,
+ * pulling it out of the pool free list so pool.acquire() can't ALSO hand it to
+ * a fresh issue (which would silently put two issues in one worktree). A slot we
+ * can't re-claim is treated as lost — the issue re-solves from scratch.
+ */
+function reclaimSlots(pool: WorktreePool, state: RunState): void {
+  for (const rec of Object.values(state.issues)) {
+    if (rec.slot == null) continue;
+    if (LIVE_SLOT.has(rec.status)) {
+      const s = pool.reserve(rec.slot);
+      if (s) s.branch = rec.branch;
+      else rec.slot = undefined;
+    } else {
+      rec.slot = undefined; // terminal / pre-solve status shouldn't pin a slot
+    }
+  }
+}
+
+function needsSolve(rec: IssueRecord | undefined): boolean {
+  if (!rec) return false;
+  if (!SKIP_SOLVE.has(rec.status)) return true;
+  // Interrupted / skipped issue that lost its worktree — re-solve from scratch.
+  return LIVE_SLOT.has(rec.status) && rec.slot == null;
+}
 
 /** Async pool of N workers draining a queue — avoids a p-limit dependency. */
 async function mapLimit<T>(items: T[], limit: number, fn: (item: T) => Promise<void>): Promise<void> {
@@ -121,11 +150,12 @@ async function core(
     // Already-complete resume: nothing to do, don't churn worktrees.
     if (state.currentWave < state.waveOrder.length) {
       await pool.create();
+      reclaimSlots(pool, state);
       try {
         for (let w = state.currentWave; w < state.waveOrder.length; w++) {
           const waveIds = state.waveOrder[w] ?? [];
 
-          const toSolve = waveIds.filter((id) => !SKIP_SOLVE.has(state.issues[id]?.status ?? ''));
+          const toSolve = waveIds.filter((id) => needsSolve(state.issues[id]));
           await mapLimit(toSolve, cfg.concurrency, (id) => runOneIssue(d, state, id));
 
           if (opts.autoApprove) {
@@ -147,7 +177,26 @@ async function core(
             if (state.issues[id]?.status === 'APPROVED') await publishApproved(d, state, id);
           }
 
-          state.currentWave = w + 1;
+          // Release any wave slot still held: a bare `skip` (or the revision
+          // cap) leaves an issue IN_REVIEW pinning its slot, and pool.acquire()
+          // has no timeout — the next wave would hang forever. Park the branch
+          // clean; a skipped issue re-solves fresh on the next run.
+          for (const id of waveIds) {
+            const rec = state.issues[id];
+            if (rec?.slot == null) continue;
+            const s = pool.slotByNumber(rec.slot);
+            if (s) {
+              await pool.discardSlotBranch(s, rec.branch);
+              pool.release(s);
+            }
+            rec.slot = undefined;
+          }
+
+          // Only checkpoint past a wave once nothing is still awaiting review —
+          // a skipped issue stays IN_REVIEW and must be re-presented next run.
+          if (!waveIds.some((id) => state.issues[id]?.status === 'IN_REVIEW')) {
+            state.currentWave = w + 1;
+          }
           saveState(root, state);
         }
       } finally {
@@ -180,7 +229,7 @@ async function dryAnalyze(d: Deps, state: RunState, id: string): Promise<void> {
       slot,
       rec.issue,
     );
-    const rel = `reports/${id}.md`;
+    const rel = `reports/${rec.slug}.md`; // rec.slug is sanitized; raw id may hold `../`
     const abs = join(d.root, '.crashfix', rel);
     mkdirSync(dirname(abs), { recursive: true });
     writeFileSync(abs, analysis.reportMarkdown);

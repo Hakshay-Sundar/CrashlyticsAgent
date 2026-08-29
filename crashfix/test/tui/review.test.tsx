@@ -1,5 +1,7 @@
+import { render } from 'ink-testing-library';
 import { describe, it, expect } from 'vitest';
 import { reduce, initialState } from '../../src/tui/useReviewStore.js';
+import { ReviewApp } from '../../src/tui/review.js';
 
 const items = [
   { record: { issue: { id: 'i1', title: 'A' }, status: 'IN_REVIEW' }, reviewMarkdown: '## Summary\nx\n\n## Repo A\n```diff\n+a\n```' },
@@ -46,5 +48,28 @@ describe('review store reduce', () => {
     s = reduce(s, { type: 'approve' });          // i1
     const decisions = reduce(s, { type: 'finalize' }).decisions;
     expect(decisions.get('i2')).toEqual({ issueId: 'i2', verdict: 'skip' });
+  });
+});
+
+describe('ReviewApp key routing', () => {
+  it('Ctrl-C finalizes and calls onDone (does not open the comment editor)', async () => {
+    let done: any = null;
+    const { stdin } = render(<ReviewApp items={items} onDone={(d) => { done = d; }} />);
+    await new Promise((r) => setTimeout(r, 20));
+    stdin.write('\x03'); // Ctrl-C -> { input: 'c', ctrl: true }
+    await new Promise((r) => setTimeout(r, 20));
+    expect(done).not.toBeNull();
+    expect(done).toEqual([
+      { issueId: 'i1', verdict: 'skip' },
+      { issueId: 'i2', verdict: 'skip' },
+    ]);
+  });
+
+  it('plain "c" still opens the comment editor', async () => {
+    const { stdin, lastFrame } = render(<ReviewApp items={items} onDone={() => {}} />);
+    await new Promise((r) => setTimeout(r, 20));
+    stdin.write('c');
+    await new Promise((r) => setTimeout(r, 20));
+    expect(lastFrame()).toContain('Comment');
   });
 });
