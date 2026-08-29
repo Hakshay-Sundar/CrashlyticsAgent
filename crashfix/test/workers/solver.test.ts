@@ -25,7 +25,7 @@ describe('runSolver', () => {
     expect(r.reviewMarkdown).toContain('## Repo A');
     expect(r.reviewMarkdown).toContain('+guard');
     expect(r.reviewMarkdown).not.toContain('## Repo B');
-    expect(r.reviewMarkdown).toContain('[Causation report](reports/i1.md)');
+    expect(r.reviewMarkdown).toContain('[Causation report](reports/npe-i1.md)');
     expect(r.selfCorrected).toBe(false);
   });
 

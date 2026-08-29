@@ -124,11 +124,10 @@ export async function runOneIssue(d: Deps, state: RunState, issueId: string): Pr
 
   let slot: Slot | undefined;
   let held = false;
-  let stage = 'acquire';
+  let stage = 'setup';
   try {
     slot = await d.pool.acquire();
     held = true;
-    stage = 'setup';
     await d.pool.reset(slot, rec.branch);
     rec.slot = slot.n;
 

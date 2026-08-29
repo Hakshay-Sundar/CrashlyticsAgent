@@ -126,6 +126,27 @@ describe('WorktreePool', () => {
     expect(pool.reserve(bad.n)).toBeUndefined();
   });
 
+  it('a parked acquire() rejects (not hangs) when the last slot becomes unrecoverable', async () => {
+    let failAdd = false;
+    const fakeGit: any = {
+      worktreeList: async () => [],
+      worktreeAdd: async () => { if (failAdd) throw new Error('worktree add boom'); },
+      worktreeRemove: async () => {},
+      checkoutNewBranch: async () => { throw new Error('checkout boom'); },
+      resetHard: async () => {},
+      clean: async () => {},
+      deleteBranch: async () => {},
+    };
+    const pool = createPool({ root, repos, base: 'main', waveSize: 1, cleanExcludes: [], git: fakeGit, log: nolog });
+    await pool.create();
+    const only = await pool.acquire();
+    const parked = pool.acquire(); // nothing can serve this yet
+    failAdd = true;
+    await expect(pool.reset(only, 'crashfix/x')).rejects.toThrow('checkout boom');
+    await expect(parked).rejects.toThrow(/pool exhausted/);
+    await expect(pool.acquire()).rejects.toThrow(/pool exhausted/); // and stays rejected
+  });
+
   it('acquire blocks until a slot is released', async () => {
     const base = await git.currentBranch(root);
     const pool = createPool({ root, repos, base, waveSize: 1, cleanExcludes: [], git, log: nolog });

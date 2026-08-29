@@ -101,6 +101,32 @@ describe('runPipeline', () => {
     expect(state.currentWave).toBe(0); // stuck wave is not checkpointed past
   });
 
+  it('B1: an early stuck wave keeps its checkpoint after a later wave completes', async () => {
+    const { root } = makeNestedRepos();
+    const d = deps({
+      launchReview: async (items: any[]) => items.map((i: any) => ({
+        issueId: i.record.issue.id,
+        verdict: i.record.issue.id === 'i3' ? 'approve' : 'skip', // skip wave 0, approve wave 1
+      })),
+    });
+    const state = await runPipeline({ root, cfg: cfg(), deps: d as any });
+
+    expect(state.currentWave).toBe(0); // NOT overwritten to 2 by the completed wave 1
+    expect(state.issues['i1'].status).toBe('IN_REVIEW');
+    expect(state.issues['i2'].status).toBe('IN_REVIEW');
+    expect(state.issues['i3'].status).toBe('PUSHED');
+    // skipped issues' branches survive for the human to inspect
+    await expect(git.revParse(join(root, 'B'), state.issues['i1'].branch)).resolves.toBeTruthy();
+    await expect(git.revParse(join(root, 'B'), state.issues['i2'].branch)).resolves.toBeTruthy();
+
+    const out = await resumePipeline(root, deps({
+      connector: { key: 'fake', fetchTopIssues: async () => { throw new Error('must not fetch'); } },
+    }) as any);
+    expect(out.issues['i1'].status).toBe('PUSHED');
+    expect(out.issues['i2'].status).toBe('PUSHED');
+    expect(out.issues['i3'].status).toBe('PUSHED');
+  });
+
   it('B1: a resume run re-presents the skipped issues; approving them pushes', async () => {
     const { root } = makeNestedRepos();
     const skip = deps({

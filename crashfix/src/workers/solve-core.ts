@@ -7,6 +7,7 @@ import type { Logger } from '../logger.js';
 import type { Slot } from '../orchestrator/pool.js';
 import type { Semaphore } from '../orchestrator/semaphore.js';
 import { runValidation, type ExecFn } from '../orchestrator/validate.js';
+import { slugify } from '../report.js';
 import type { Issue, RepoInfo, ValidationResult } from '../types.js';
 import type { RunWorker } from './spawn.js';
 
@@ -71,6 +72,9 @@ export async function buildReviewPacket(
   );
   const banner = validation.ok ? '' : `\n\n> ⚠ build failing\n\n\`\`\`\n${validation.tail}\n\`\`\``;
   return (
-    `## Summary\n\n${summary}\n\n[Causation report](reports/${issue.id}.md)\n\n` + sections.join('\n\n') + banner
+    // Same derivation as fetchPhase's rec.slug — reports are written as reports/<slug>.md.
+    `## Summary\n\n${summary}\n\n[Causation report](reports/${slugify(issue.title, issue.id)}.md)\n\n` +
+    sections.join('\n\n') +
+    banner
   );
 }

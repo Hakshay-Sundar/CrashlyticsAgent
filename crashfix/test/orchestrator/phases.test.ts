@@ -135,6 +135,18 @@ describe('phases', () => {
     expect(state.issues['i1'].slot).toBeUndefined();
   });
 
+  it('runOneIssue -> FAILED (setup) when the pool is exhausted — no hang', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'cfx-'));
+    const d = fakeDeps(root);
+    d.pool.acquire = async () => { throw new Error('worktree pool exhausted: all slots unrecoverable'); };
+    const state = newState(d.cfg);
+    seedIssue(state, 'i1');
+    await runOneIssue(d, state, 'i1');
+    expect(state.issues['i1'].status).toBe('FAILED');
+    expect(state.issues['i1'].failureStage).toBe('setup');
+    expect(state.issues['i1'].notes).toMatch(/pool exhausted/);
+  });
+
   it('runOneIssue writes artifacts under .crashfix by slug — a raw ../ id cannot escape', async () => {
     const root = mkdtempSync(join(tmpdir(), 'cfx-'));
     const d = fakeDeps(root);

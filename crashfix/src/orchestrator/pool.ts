@@ -53,7 +53,7 @@ export function createPool(o: PoolOpts): WorktreePool {
 
   let size = o.waveSize;
   const free: Slot[] = [];
-  const waiters: ((s: Slot) => void)[] = [];
+  const waiters: { res: (s: Slot) => void; rej: (e: unknown) => void }[] = [];
   const all: Slot[] = [];
 
   function mkSlot(n: number): Slot {
@@ -90,7 +90,8 @@ export function createPool(o: PoolOpts): WorktreePool {
     async acquire() {
       const s = free.pop();
       if (s) return s;
-      return new Promise<Slot>((res) => waiters.push(res));
+      if (all.length === 0) throw new Error('worktree pool exhausted: all slots unrecoverable');
+      return new Promise<Slot>((res, rej) => waiters.push({ res, rej }));
     },
 
     reserve(n) {
@@ -118,7 +119,7 @@ export function createPool(o: PoolOpts): WorktreePool {
     release(slot) {
       if (!all.includes(slot)) return; // quarantined out of rotation — don't resurrect
       const w = waiters.shift();
-      if (w) w(slot);
+      if (w) w.res(slot);
       else free.push(slot);
     },
 
@@ -153,6 +154,12 @@ export function createPool(o: PoolOpts): WorktreePool {
           if (i !== -1) list.splice(i, 1);
         }
         o.log.warn(`slot ${slot.n} unrecoverable; pool shrunk to ${size}`, e);
+        // No slots left — anyone parked in acquire() would hang forever. Reject
+        // them so runOneIssue surfaces it as that issue FAILED, not a deadlock.
+        if (all.length === 0) {
+          const err = new Error('worktree pool exhausted: all slots unrecoverable');
+          while (waiters.length) waiters.shift()!.rej(err);
+        }
       }
     },
 

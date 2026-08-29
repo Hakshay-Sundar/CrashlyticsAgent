@@ -177,26 +177,31 @@ async function core(
             if (state.issues[id]?.status === 'APPROVED') await publishApproved(d, state, id);
           }
 
-          // Release any wave slot still held: a bare `skip` (or the revision
-          // cap) leaves an issue IN_REVIEW pinning its slot, and pool.acquire()
-          // has no timeout — the next wave would hang forever. Park the branch
-          // clean; a skipped issue re-solves fresh on the next run.
+          // Free any wave slot still pinned: a bare `skip` (or the revision cap)
+          // leaves an issue IN_REVIEW holding its slot, and pool.acquire() has
+          // no timeout — the next wave would hang. Just unpark the slot; LEAVE
+          // the issue branch intact (the human skipped it to look at later) and
+          // clear pool.branch so teardown doesn't delete it.
           for (const id of waveIds) {
             const rec = state.issues[id];
             if (rec?.slot == null) continue;
             const s = pool.slotByNumber(rec.slot);
             if (s) {
-              await pool.discardSlotBranch(s, rec.branch);
               pool.release(s);
+              s.branch = undefined;
             }
             rec.slot = undefined;
           }
 
-          // Only checkpoint past a wave once nothing is still awaiting review —
-          // a skipped issue stays IN_REVIEW and must be re-presented next run.
-          if (!waveIds.some((id) => state.issues[id]?.status === 'IN_REVIEW')) {
-            state.currentWave = w + 1;
-          }
+          // Advance the resume checkpoint only when it still points at THIS wave
+          // and this wave has nothing left awaiting review — otherwise a later
+          // completed wave would overwrite the checkpoint of an earlier stuck
+          // one and its skipped issues would never be re-presented.
+          const stuck = waveIds.some((id) => {
+            const s = state.issues[id]?.status;
+            return s === 'IN_REVIEW' || s === 'NEEDS_REVISION';
+          });
+          if (state.currentWave === w && !stuck) state.currentWave = w + 1;
           saveState(root, state);
         }
       } finally {
