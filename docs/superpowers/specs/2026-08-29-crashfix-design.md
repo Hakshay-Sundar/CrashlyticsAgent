@@ -61,6 +61,23 @@ in plain JS + `git` + provider REST — never by a worker.
 
 ## 5. Phases and per-issue state machine
 
+### 5.0 Wave batching
+
+The dev may request up to `--limit` issues (default 25), but the local machine is
+resource-constrained (disk for worktrees, RAM/CPU for gradle). The orchestrator
+processes issues in **waves of `waveSize` (default 5)**.
+
+A wave runs the full pipeline for its ≤5 issues — setup → analyze → solve → review →
+publish/reject — and tears down that wave's worktrees before the next wave starts.
+The master report accumulates across all waves. The human reviews one wave at a time.
+
+`waveSize` ≥ `concurrency` is pointless (workers idle); `crashfix` warns if
+`concurrency > waveSize` and effectively caps concurrency at `waveSize`.
+
+Resume re-enters at the wave and phase where it stopped.
+
+### 5.1 Per-issue state machine
+
 Per-issue status:
 
 ```
@@ -72,9 +89,11 @@ analyzer  → UNFIXABLE (not fixed, reason recorded, no worktree)
 publish   → PARTIALLY_PUSHED (some repos landed, some failed)
 ```
 
-1. **Fetch** — fetcher gets N issues (or fewer if fewer exist). Filters applied:
-   min app version, type (crash/ANR), min event count, since-date. Write `state.json`.
-2. **Setup** — orchestrator creates a coordinated worktree set per issue (§6).
+1. **Fetch** — fetcher gets up to `--limit` issues (or fewer if fewer exist). Filters
+   applied: min app version, type (crash/ANR), min event count, since-date. Split into
+   waves of `waveSize`. Write `state.json`. (Runs once; later phases loop per wave.)
+2. **Setup** — for the current wave, orchestrator creates a coordinated worktree set
+   per issue (§6).
 3. **Analyze** — fan out analyzer (concurrency cap), each writes
    `.crashfix/reports/<id>.md`. Reporter links all into `.crashfix/report.md`.
    Analyzer may return `UNFIXABLE` → skip solve, record in report.
@@ -94,11 +113,16 @@ publish   → PARTIALLY_PUSHED (some repos landed, some failed)
    causation report. Master report rows → `PUSHED` + PR URLs.
 8. **Reject cleanup** — remove every worktree in the set, delete every
    `crashfix/<slug>` branch. Master report row → `NOT FIXED` + reason.
-9. **Done** — print summary table + path to master report.
+9. **Wave teardown** — remove any remaining worktrees for this wave (pushed branches
+   are kept on the remote; local worktrees/branches for pushed issues are removed).
+   Loop to step 2 for the next wave, if any.
+10. **Done** — print summary table across all waves + path to master report.
 
 **Resume:** on start, if `state.json` exists, orchestrator replays from the last
-completed phase per issue. Every phase is idempotent (re-running a completed phase is
-a no-op; re-running a partial phase picks up remaining issues).
+completed phase per issue, within the wave where it stopped. Every phase is idempotent
+(re-running a completed phase is a no-op; re-running a partial phase picks up remaining
+issues). `state.json` records the fetched issue list, wave assignment, and per-issue
+status, so resume never re-fetches.
 
 ## 6. Multi-repo handling
 
@@ -172,7 +196,8 @@ After a solver edits its worktree it validates the fix. Default: **full build**.
     }
   },
   "repos": [ /* §6; each may add "buildCommand": "./gradlew :app:assembleDebug" */ ],
-  "concurrency": 4,                 // 1..8
+  "concurrency": 4,                 // 1..8, effectively capped at waveSize
+  "waveSize": 5,                    // issues processed per wave (worktrees alive at once)
   "validation": "build",           // build | lint | none
   "buildParallelism": 2,           // max concurrent builds across worktrees
   "models": {
@@ -214,6 +239,7 @@ run opts:
   --min-events 100
   --since 2026-08-01
   --concurrency 4..8
+  --wave-size 5              issues per wave (default config.waveSize)
   --source <connector key>   default config.issueSource
   --dry-run                  fetch + analyze only; no worktrees, no edits
   --yes                      skip TUI, auto-approve all (CI mode)
@@ -278,8 +304,8 @@ interface Issue {
 - **Unit (vitest):** config load/validate, repo-map discovery, file→repo routing, diff
   grouping, slug / branch naming, state-machine transitions, connector normalization,
   PR cross-link body patching, build-queue semaphore (never exceeds
-  `buildParallelism`, releases slot on error/timeout). Git and the SDK are behind
-  interfaces with fakes.
+  `buildParallelism`, releases slot on error/timeout), wave splitting + wave-loop
+  resume. Git and the SDK are behind interfaces with fakes.
 - **Integration:** temp dir containing nested throwaway git repos + fixture Crashlytics
   JSON + a stub connector; run the pipeline through `--dry-run`, and through solve with
   a scripted fake solver; assert on worktrees, report files, and `state.json`.
