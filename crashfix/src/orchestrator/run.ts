@@ -53,7 +53,8 @@ export async function runPipeline(o: RunPipelineOptions): Promise<RunState> {
 
   const dirty: string[] = [];
   for (const r of repos) {
-    const changes = (await git.status(repoDir(o.root, r))).filter((c) => !c.path.startsWith('.crashfix'));
+    const changes = (await git.status(repoDir(o.root, r)))
+      .filter((c) => c.path !== '.crashfix' && !c.path.startsWith('.crashfix/'));
     if (changes.length) dirty.push(r.name);
   }
   if (dirty.length && !o.force) {
@@ -117,37 +118,43 @@ async function core(
       return state;
     }
 
-    await pool.create();
-    for (let w = state.currentWave; w < state.waveOrder.length; w++) {
-      const waveIds = state.waveOrder[w] ?? [];
+    // Already-complete resume: nothing to do, don't churn worktrees.
+    if (state.currentWave < state.waveOrder.length) {
+      await pool.create();
+      try {
+        for (let w = state.currentWave; w < state.waveOrder.length; w++) {
+          const waveIds = state.waveOrder[w] ?? [];
 
-      const toSolve = waveIds.filter((id) => !SKIP_SOLVE.has(state.issues[id]?.status ?? ''));
-      await mapLimit(toSolve, cfg.concurrency, (id) => runOneIssue(d, state, id));
+          const toSolve = waveIds.filter((id) => !SKIP_SOLVE.has(state.issues[id]?.status ?? ''));
+          await mapLimit(toSolve, cfg.concurrency, (id) => runOneIssue(d, state, id));
 
-      if (opts.autoApprove) {
-        for (const id of waveIds) {
-          const rec = state.issues[id];
-          if (rec?.status === 'IN_REVIEW') {
-            rec.status = 'APPROVED';
-            rec.decision = { issueId: id, verdict: 'approve' };
+          if (opts.autoApprove) {
+            for (const id of waveIds) {
+              const rec = state.issues[id];
+              if (rec?.status === 'IN_REVIEW') {
+                rec.status = 'APPROVED';
+                rec.decision = { issueId: id, verdict: 'approve' };
+              }
+            }
+            saveState(root, state);
+          } else {
+            await reviewWave(d, state, waveIds);
           }
+
+          await reviseAndReview(d, state, waveIds);
+
+          for (const id of waveIds) {
+            if (state.issues[id]?.status === 'APPROVED') await publishApproved(d, state, id);
+          }
+
+          state.currentWave = w + 1;
+          saveState(root, state);
         }
-        saveState(root, state);
-      } else {
-        await reviewWave(d, state, waveIds);
+      } finally {
+        await pool.destroy();
       }
-
-      await reviseAndReview(d, state, waveIds);
-
-      for (const id of waveIds) {
-        if (state.issues[id]?.status === 'APPROVED') await publishApproved(d, state, id);
-      }
-
-      state.currentWave = w + 1;
-      saveState(root, state);
     }
 
-    await pool.destroy();
     state.phase = 'done';
     persist(root, state);
     return state;

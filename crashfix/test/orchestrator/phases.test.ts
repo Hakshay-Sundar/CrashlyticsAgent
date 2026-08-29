@@ -116,6 +116,23 @@ describe('phases', () => {
     expect(state.issues['i1'].slot).toBeUndefined();
   });
 
+  it('runOneIssue -> FAILED when the solver produces no changes (never reaches IN_REVIEW)', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'cfx-'));
+    let released = 0;
+    const d = fakeDeps(root, {
+      git: { ...fakeDeps(root).git, status: async () => [] }, // no worktree changes
+    });
+    d.pool.release = () => { released++; };
+    const state = newState(d.cfg);
+    seedIssue(state, 'i1');
+    await runOneIssue(d, state, 'i1');
+    expect(state.issues['i1'].status).toBe('FAILED');
+    expect(state.issues['i1'].failureStage).toBe('solve');
+    expect(state.issues['i1'].notes).toBe('solver produced no changes');
+    expect(released).toBe(1);
+    expect(state.issues['i1'].slot).toBeUndefined();
+  });
+
   it('reviewWave: plain approve -> APPROVED', async () => {
     const root = mkdtempSync(join(tmpdir(), 'cfx-'));
     const d = fakeDeps(root);
