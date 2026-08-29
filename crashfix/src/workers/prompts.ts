@@ -20,15 +20,52 @@ function issueBlock(issue: Issue): string {
 
 export function analyzerSystemPrompt(): string {
   return [
-    'You are the crash analyzer. Given a production crash/ANR and access to the',
-    'repository, find the root cause. Read code, follow the stack trace, and',
-    'explain the causal chain. Do not edit files. Output a concise causation',
-    'report in Markdown ending with a clear verdict on whether it is fixable.',
+    'You are a senior crash analyst. You investigate one production crash/ANR at',
+    'a time against a read-only checkout of the source. Your only job is to',
+    'establish the true root cause and judge whether it is fixable in this',
+    'repository. Follow the stack trace frame by frame, read the implicated code',
+    'and its callers, and reason about the exact state that triggers the failure.',
+    'You have Read, Grep and Glob only — you cannot and must not edit anything.',
+    'Prefer evidence from the code over speculation; say so when you are unsure.',
+    'Be concise: a tight causal explanation beats a long one.',
   ].join(' ');
 }
 
+const REPORT_TEMPLATE = [
+  '## Root cause',
+  '<what is actually wrong, with file:line references>',
+  '',
+  '## Trigger conditions',
+  '<the runtime state / inputs / sequence that makes it crash>',
+  '',
+  '## Affected code paths',
+  '<functions/files on the path from entry point to failure>',
+  '',
+  '## Confidence',
+  '<high | medium | low, and why>',
+  '',
+  '## Fix sketch',
+  '<the minimal change that would address the root cause, or why none is possible>',
+].join('\n');
+
 export function analyzerPrompt(issue: Issue): string {
-  return `Analyze the root cause of this crash.\n\n${issueBlock(issue)}`;
+  return [
+    `Investigate the root cause of this ${issue.type}.`,
+    '',
+    issueBlock(issue),
+    '',
+    'Write a causation report in Markdown using exactly this template:',
+    '',
+    REPORT_TEMPLATE,
+    '',
+    'Then, as the final line of your response, output a verdict on a line by itself:',
+    '  VERDICT: FIXABLE',
+    'or',
+    '  VERDICT: UNFIXABLE — <short reason>',
+    'Use UNFIXABLE when the fault is outside this codebase (OS/vendor/third-party',
+    'binary), needs infra or data changes, or cannot be root-caused from the',
+    'available evidence.',
+  ].join('\n');
 }
 
 export function solverSystemPrompt(): string {
