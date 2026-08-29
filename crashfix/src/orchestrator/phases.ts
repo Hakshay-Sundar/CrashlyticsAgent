@@ -79,6 +79,13 @@ function solveDeps(d: Deps, model: string): SolveDeps {
 const heldSlot = (d: Deps, rec: IssueRecord): Slot | undefined =>
   rec.slot != null ? d.pool.slotByNumber(rec.slot) : undefined;
 
+// Release a slot and forget it on the record, so a later slotByNumber(rec.slot)
+// can't hand back a slot another issue now holds.
+function releaseSlot(d: Deps, rec: IssueRecord, slot: Slot): void {
+  d.pool.release(slot);
+  rec.slot = undefined;
+}
+
 /** connector fetch → triage (deterministic sort by blast radius) → IssueRecords + waveOrder. */
 export async function fetchPhase(d: Deps, state: RunState): Promise<void> {
   const issues = await d.connector.fetchTopIssues({
@@ -89,6 +96,7 @@ export async function fetchPhase(d: Deps, state: RunState): Promise<void> {
     .sort((a, b) => b.eventCount * b.userCount - a.eventCount * a.userCount)
     .slice(0, d.cfg.defaults.limit);
 
+  state.issues = {};
   state.waveOrder = [];
   ranked.forEach((issue, i) => {
     const slug = slugify(issue.title, issue.id);
@@ -134,8 +142,8 @@ export async function runOneIssue(d: Deps, state: RunState, issueId: string): Pr
     if (analysis.unfixable) {
       rec.status = 'UNFIXABLE';
       rec.notes = analysis.reason;
-      d.pool.release(slot);
       held = false;
+      releaseSlot(d, rec, slot);
       persist(d, state);
       return;
     }
@@ -161,7 +169,7 @@ export async function runOneIssue(d: Deps, state: RunState, issueId: string): Pr
     rec.status = 'FAILED';
     rec.failureStage = stage;
     rec.notes = (e as Error).message;
-    if (held && slot) d.pool.release(slot);
+    if (held && slot) releaseSlot(d, rec, slot);
     persist(d, state);
   }
 }
@@ -185,26 +193,33 @@ export async function reviewWave(d: Deps, state: RunState, waveIds: string[]): P
     const decision = byId.get(rec.issue.id);
     if (!decision) continue;
 
-    if (decision.verdict === 'reject') {
-      rec.decision = decision;
-      await rejectIssue(d, state, rec.issue.id);
-      continue;
-    }
+    try {
+      if (decision.verdict === 'reject') {
+        rec.decision = decision;
+        await rejectIssue(d, state, rec.issue.id);
+        continue;
+      }
 
-    const comments = decision.comments ?? rec.decision?.comments;
-    if (decision.verdict === 'approve' && !comments) {
-      rec.status = 'APPROVED';
-      rec.decision = decision;
+      const comments = decision.comments ?? rec.decision?.comments;
+      if (decision.verdict === 'approve' && !comments) {
+        rec.status = 'APPROVED';
+        rec.decision = decision;
+        persist(d, state);
+        continue;
+      }
+      if (comments) {
+        rec.status = 'NEEDS_REVISION';
+        rec.decision = { issueId: rec.issue.id, verdict: decision.verdict, comments };
+        persist(d, state);
+        continue;
+      }
+      // bare skip, no comment → leave IN_REVIEW untouched.
+    } catch (e) {
+      rec.status = 'FAILED';
+      rec.failureStage = 'review';
+      rec.notes = (e as Error).message;
       persist(d, state);
-      continue;
     }
-    if (comments) {
-      rec.status = 'NEEDS_REVISION';
-      rec.decision = { issueId: rec.issue.id, verdict: decision.verdict, comments };
-      persist(d, state);
-      continue;
-    }
-    // bare skip, no comment → leave IN_REVIEW untouched.
   }
 }
 
@@ -239,7 +254,7 @@ export async function reviseAndReview(d: Deps, state: RunState, waveIds: string[
         rec.status = 'FAILED';
         rec.failureStage = 'revise';
         rec.notes = (e as Error).message;
-        if (slot) d.pool.release(slot);
+        if (slot) releaseSlot(d, rec, slot);
         persist(d, state);
       }
     }
@@ -266,6 +281,7 @@ export async function publishApproved(d: Deps, state: RunState, issueId: string)
   if (!rec) throw new Error(`publishApproved: unknown issue ${issueId}`);
 
   const slot = heldSlot(d, rec);
+  let released = false;
   try {
     if (!slot) throw new Error('no held slot for publish');
     const affected = repoList(d).filter((r) => rec.affectedRepos.includes(r.name));
@@ -287,14 +303,22 @@ export async function publishApproved(d: Deps, state: RunState, issueId: string)
     );
 
     rec.prUrls = outcome.prUrls;
-    rec.status = outcome.partial ? 'PARTIALLY_PUSHED' : 'PUSHED';
-    d.pool.release(slot);
+    const allFailed = outcome.failedRepos.length > 0 && Object.keys(outcome.prUrls).length === 0;
+    if (allFailed) {
+      rec.status = 'FAILED';
+      rec.failureStage = 'publish';
+      rec.notes = `publish failed for all repos: ${outcome.failedRepos.join(', ')}`;
+    } else {
+      rec.status = outcome.partial ? 'PARTIALLY_PUSHED' : 'PUSHED';
+    }
+    released = true;
+    releaseSlot(d, rec, slot);
     persist(d, state);
   } catch (e) {
     rec.status = 'FAILED';
     rec.failureStage = 'publish';
     rec.notes = (e as Error).message;
-    if (slot) d.pool.release(slot);
+    if (slot && !released) releaseSlot(d, rec, slot);
     persist(d, state);
   }
 }
@@ -311,7 +335,7 @@ export async function rejectIssue(d: Deps, state: RunState, issueId: string): Pr
       const dir = slot.repoDirs[name];
       if (dir) await d.git.deleteBranch(dir, rec.branch);
     }
-    d.pool.release(slot);
+    releaseSlot(d, rec, slot);
   }
 
   rec.status = 'REJECTED';
