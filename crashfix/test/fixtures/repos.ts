@@ -56,3 +56,28 @@ export function makeNestedRepos(): { root: string; repos: NestedRepo[] } {
 
   return { root, repos };
 }
+
+// Seed an obvious null-deref into repo B's history so a scripted fake solver can
+// "fix" it (replace `feed!!` with `feed?`) and produce a real diff to commit.
+export function seedSource(root: string): string {
+  const dir = join(root, 'B', 'app');
+  mkdirSync(dir, { recursive: true });
+  const file = join(dir, 'Feature.kt');
+  writeFileSync(
+    file,
+    [
+      'package app',
+      '',
+      'class Feature(private val repo: Repo) {',
+      '    fun render(): String {',
+      '        val feed = repo.loadFeed()',
+      '        return feed!!.items.joinToString()',
+      '    }',
+      '}',
+      '',
+    ].join('\n'),
+  );
+  git(join(root, 'B'), 'add', '-A');
+  git(join(root, 'B'), 'commit', '-m', 'add Feature with null-deref');
+  return file;
+}
