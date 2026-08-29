@@ -61,20 +61,35 @@ in plain JS + `git` + provider REST — never by a worker.
 
 ## 5. Phases and per-issue state machine
 
-### 5.0 Wave batching
+### 5.0 Wave batching + worktree pool
 
 The dev may request up to `--limit` issues (default 25), but the local machine is
-resource-constrained (disk for worktrees, RAM/CPU for gradle). The orchestrator
-processes issues in **waves of `waveSize` (default 5)**.
+resource-constrained (disk for worktrees, RAM/CPU for gradle). The orchestrator keeps
+a **fixed pool of `waveSize` (default 5) coordinated worktree sets** for the entire
+run and processes issues in **waves of `waveSize`**.
 
-A wave runs the full pipeline for its ≤5 issues — setup → analyze → solve → review →
-publish/reject — and tears down that wave's worktrees before the next wave starts.
-The master report accumulates across all waves. The human reviews one wave at a time.
+- **Pool created once** at run start: `waveSize` worktree sets (§6), each = repo A +
+  every nested repo, `git worktree add`ed.
+- **Slot assignment:** each issue is bound to a free pool slot. The slot is reset to a
+  clean base before use — across every repo in the set:
+  `git checkout -B crashfix/<slug> <base>` then `git reset --hard <base>` +
+  `git clean -fdx` (with a config `cleanExcludes` for local caches like
+  `.gradle/`, `local.properties`).
+- **A wave** runs the full pipeline for its ≤5 issues — setup (reset slot) → analyze →
+  solve → review → publish/reject. On issue completion the slot returns to the pool
+  and is reset for the next issue. **Worktrees are not removed between issues or
+  waves.**
+- **Pool removed only at run end** (or via `crashfix clean`): `git worktree remove`
+  all sets, prune, delete leftover local `crashfix/*` branches. Pushed branches remain
+  on the remote.
+
+The master report accumulates across all waves; the human reviews one wave at a time.
 
 `waveSize` ≥ `concurrency` is pointless (workers idle); `crashfix` warns if
 `concurrency > waveSize` and effectively caps concurrency at `waveSize`.
 
-Resume re-enters at the wave and phase where it stopped.
+Resume re-enters at the wave and phase where it stopped, **reusing the existing pool
+worktrees** if present (else recreating them).
 
 ### 5.1 Per-issue state machine
 
@@ -92,8 +107,9 @@ publish   → PARTIALLY_PUSHED (some repos landed, some failed)
 1. **Fetch** — fetcher gets up to `--limit` issues (or fewer if fewer exist). Filters
    applied: min app version, type (crash/ANR), min event count, since-date. Split into
    waves of `waveSize`. Write `state.json`. (Runs once; later phases loop per wave.)
-2. **Setup** — for the current wave, orchestrator creates a coordinated worktree set
-   per issue (§6).
+2. **Setup** — bind each wave issue to a free pool slot and reset that slot to a clean
+   `crashfix/<slug>` branch off base (§5.0). Pool slots are created on the first wave
+   and reused thereafter.
 3. **Analyze** — fan out analyzer (concurrency cap), each writes
    `.crashfix/reports/<id>.md`. Reporter links all into `.crashfix/report.md`.
    Analyzer may return `UNFIXABLE` → skip solve, record in report.
@@ -111,12 +127,14 @@ publish   → PARTIALLY_PUSHED (some repos landed, some failed)
 7. **Publish** — approved issues: publisher commits + pushes each affected repo's
    branch, opens a PR per repo, two-pass cross-links the PR bodies, embeds the
    causation report. Master report rows → `PUSHED` + PR URLs.
-8. **Reject cleanup** — remove every worktree in the set, delete every
-   `crashfix/<slug>` branch. Master report row → `NOT FIXED` + reason.
-9. **Wave teardown** — remove any remaining worktrees for this wave (pushed branches
-   are kept on the remote; local worktrees/branches for pushed issues are removed).
-   Loop to step 2 for the next wave, if any.
-10. **Done** — print summary table across all waves + path to master report.
+8. **Reject cleanup** — release the slot (reset to base on next use), delete the local
+   `crashfix/<slug>` branch. Worktree stays in the pool. Master report row →
+   `NOT FIXED` + reason.
+9. **Wave rollover** — completed issues' slots return to the pool. Loop to step 2 for
+   the next wave, if any. No worktree removal.
+10. **Done** — remove the entire pool (`git worktree remove` all sets, prune, delete
+    leftover local `crashfix/*` branches). Print summary table across all waves + path
+    to master report. Pushed remote branches/PRs are untouched.
 
 **Resume:** on start, if `state.json` exists, orchestrator replays from the last
 completed phase per issue, within the wave where it stopped. Every phase is idempotent
@@ -143,10 +161,12 @@ the human to confirm names and providers.
 ]
 ```
 
-**Coordinated worktree set** per issue: worktree of A at
-`.crashfix/worktrees/<id>/` on branch `crashfix/<slug>`; each nested repo gets
-`git worktree add` into its matching subpath, **same branch name**. The solver sees
-one normal assembled project tree and edits across it freely.
+**Coordinated worktree set** (pool slot): worktree of A at
+`.crashfix/worktrees/slot-<n>/`; each nested repo gets `git worktree add` into its
+matching subpath, **same branch name**. When a slot is assigned an issue, every repo
+in the set is switched to `crashfix/<slug>` off base and cleaned (§5.0). The solver
+sees one normal assembled project tree and edits across it freely.
+Slots are numbered `slot-0 … slot-(waveSize-1)`, not per-issue, since they are reused.
 
 **Affected-repo detection:** after solve, `git status --porcelain` in each repo
 worktree → the set of repos with changes for that issue.
@@ -160,8 +180,8 @@ open PR via that repo's provider API. Two-pass: create all PRs first, then patch
 body to cross-link its siblings ("Part of crashfix issue `<id>`; companion PRs: …")
 and embed the causation report. Master report row lists every PR URL.
 
-**Reject:** remove all worktrees in the set, delete all `crashfix/<slug>` branches
-across affected repos.
+**Reject:** delete the local `crashfix/<slug>` branch in every repo of the set; the
+slot's worktrees stay in the pool and are reset on next assignment. Nothing was pushed.
 
 **Partial push failure:** issue → `PARTIALLY_PUSHED`; master report shows which repos
 landed. No auto-rollback — human decides.
@@ -184,6 +204,29 @@ After a solver edits its worktree it validates the fix. Default: **full build**.
   the master report. A failing build does not block review — the human still decides
   (see §10).
 
+## 6b. Master report — `.crashfix/report.md`
+
+Maintained by the reporter worker, updated after every phase. One row per issue, plus
+links to the per-issue causation report.
+
+| column | source |
+|---|---|
+| issue id / title / type | connector |
+| event count / user count / affected versions | connector |
+| status | state machine (`ANALYZED`, `PUSHED`, `NOT FIXED`, `PARTIALLY_PUSHED`, `FAILED`, …) |
+| branch | `crashfix/<slug>` |
+| slot | pool slot that processed it |
+| affected repos | affected-repo detection |
+| causation report | link to `.crashfix/reports/<id>.md` (root cause + analysis) |
+| review packet | link to `.crashfix/reviews/<id>.md` (diff + human decision + comments) |
+| PR URLs | one per affected repo, after publish |
+| build result | pass / fail (tail) |
+| notes | reject reason / unfixable reason / failure stage |
+
+Because worktrees are deleted at run end, the report + the two per-issue md files are
+the durable record — they retain the branch name, the diff, and the PR links so a
+human can find the work later.
+
 ## 7. Config — `crashfix.config.json`
 
 ```jsonc
@@ -197,7 +240,8 @@ After a solver edits its worktree it validates the fix. Default: **full build**.
   },
   "repos": [ /* §6; each may add "buildCommand": "./gradlew :app:assembleDebug" */ ],
   "concurrency": 4,                 // 1..8, effectively capped at waveSize
-  "waveSize": 5,                    // issues processed per wave (worktrees alive at once)
+  "waveSize": 5,                    // pool size: worktree sets alive at once + issues per wave
+  "cleanExcludes": [".gradle/", "local.properties", "*.iml"],  // kept across slot resets
   "validation": "build",           // build | lint | none
   "buildParallelism": 2,           // max concurrent builds across worktrees
   "models": {
@@ -293,8 +337,12 @@ interface Issue {
   on timeout the validation result is `fail (timeout)`.
 - **Dirty base repo:** `run` refuses if any repo has uncommitted changes to files it
   would touch; `--force` overrides.
-- **Pre-existing worktree / branch** (prior aborted run): detected; human offered reuse
+- **Pre-existing pool worktrees** (prior aborted run): expected on `resume` — reused
+  after a hard reset. On a fresh `run` (no `state.json`), the human is offered reuse
   or `crashfix clean`.
+- **Slot reset failure** (clean/checkout fails, e.g. locked file): slot quarantined,
+  its worktrees rebuilt from scratch; if that also fails, wave shrinks by one slot
+  and a warning is logged (no silent capacity loss).
 - **MCP / Firebase auth failure:** hard fail at `init` or fetch, with fix instructions.
 - **State corruption:** `state.json` is schema-versioned and validated on load; a
   `state.json.bak` is written before each phase transition.
@@ -305,7 +353,9 @@ interface Issue {
   grouping, slug / branch naming, state-machine transitions, connector normalization,
   PR cross-link body patching, build-queue semaphore (never exceeds
   `buildParallelism`, releases slot on error/timeout), wave splitting + wave-loop
-  resume. Git and the SDK are behind interfaces with fakes.
+  resume, pool slot assignment + reset (never exceeds `waveSize`, `cleanExcludes`
+  honored, quarantine on reset failure). Git and the SDK are behind interfaces with
+  fakes.
 - **Integration:** temp dir containing nested throwaway git repos + fixture Crashlytics
   JSON + a stub connector; run the pipeline through `--dry-run`, and through solve with
   a scripted fake solver; assert on worktrees, report files, and `state.json`.
@@ -324,7 +374,8 @@ crashfix/
     orchestrator/
       run.ts                  state-machine loop
       phases/                 fetch.ts analyze.ts solve.ts review.ts revise.ts publish.ts reject.ts
-      worktrees.ts            coordinated set create / remove
+      pool.ts                 worktree-set pool: create, assign, reset slot, destroy
+      worktrees.ts            single coordinated set create / remove / reset
       buildqueue.ts           validation semaphore (buildParallelism)
       reposcan.ts             init discovery
     workers/
@@ -343,7 +394,10 @@ crashfix/
 
 - Exact Firebase MCP tool names / response shapes — pin during connector build against
   the installed `firebase-tools` version.
-- Whether `git worktree add` for a repo at path `.` plus nested-repo worktrees needs a
-  wrapper dir to avoid A's worktree clobbering the nested checkouts — resolve in
-  `worktrees.ts` with an integration test.
+- Whether `git worktree add` for a repo at path `.` plus nested-repo worktrees (all
+  under `.crashfix/worktrees/slot-<n>/`) needs a wrapper dir to avoid A's worktree
+  clobbering the nested checkouts — resolve in `worktrees.ts` with an integration test.
+- Slot reset strategy: `git checkout -B` + `reset --hard` + `clean -fdx` vs. a full
+  worktree rebuild per issue — measure which is faster on a real KMP repo; the pool
+  design assumes reset is cheaper.
 - Provider PR API auth: reuse `gh` / `glab` CLIs if present, else PAT from env.
