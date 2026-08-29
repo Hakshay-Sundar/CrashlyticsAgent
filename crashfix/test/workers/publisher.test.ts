@@ -78,5 +78,48 @@ describe('publishIssue', () => {
     );
     expect(out.failedRepos).toEqual(['B']);
     expect(out.partial).toBe(true);
+    expect(Object.keys(out.prUrls)).toEqual(['A']);
+  });
+
+  it('all repos failing → not partial, empty prUrls, all in failedRepos', async () => {
+    const provider = (p: string) =>
+      ({
+        name: p,
+        openPr: async () => {
+          throw new Error('boom');
+        },
+        updatePrBody: async () => {},
+      }) as any;
+    const out = await publishIssue(
+      { git, provider, http: (async () => ({ status: 200, json: {} })) as any, log: nolog, base: 'main' },
+      slot,
+      { id: 'i1', title: 'NPE' } as any,
+      repos,
+      { commitMessage: 'c', prTitle: 't', prBody: 'b' },
+    );
+    expect(out.partial).toBe(false);
+    expect(out.prUrls).toEqual({});
+    expect(out.failedRepos).toEqual(['A', 'B']);
+  });
+
+  it('a cross-link updatePrBody throw is non-fatal', async () => {
+    const provider = (p: string) =>
+      ({
+        name: p,
+        openPr: async (i: any) => ({ url: `https://${p}/pr/${i.branch}`, id: '1' }),
+        updatePrBody: async (url: string) => {
+          if (url.includes('bitbucket')) throw new Error('cross-link 500');
+        },
+      }) as any;
+    const out = await publishIssue(
+      { git, provider, http: (async () => ({ status: 200, json: {} })) as any, log: nolog, base: 'main' },
+      slot,
+      { id: 'i1', title: 'NPE' } as any,
+      repos,
+      { commitMessage: 'c', prTitle: 't', prBody: 'b' },
+    );
+    expect(out.partial).toBe(false);
+    expect(out.failedRepos).toEqual([]);
+    expect(Object.keys(out.prUrls).sort()).toEqual(['A', 'B']);
   });
 });

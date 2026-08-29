@@ -43,8 +43,11 @@ export async function runPublisherText(
     allowedTools: [],
   });
 
-  const parsed = extractJsonBlock(text) as Record<string, unknown>;
-  const { commitMessage, prTitle, prBody } = parsed;
+  const parsed = extractJsonBlock(text);
+  if (!parsed || typeof parsed !== 'object') {
+    throw new Error('publisher json block was not an object');
+  }
+  const { commitMessage, prTitle, prBody } = parsed as Record<string, unknown>;
   for (const [k, v] of Object.entries({ commitMessage, prTitle, prBody })) {
     if (typeof v !== 'string' || v.length === 0) {
       throw new Error(`publisher worker json block: field "${k}" must be a non-empty string`);
