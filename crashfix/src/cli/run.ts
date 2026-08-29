@@ -1,4 +1,4 @@
-export function runCommand() {
+export function runCommand(_opts?: unknown) {
   console.log('not implemented');
 }
 
