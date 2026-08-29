@@ -27,4 +27,7 @@ program.command('clean').description('remove all worktrees / crashfix branches /
   .option('--yes', 'skip the confirmation prompt')
   .action(async (opts) => { await (await import('./cli/clean.js')).cleanCommand({ cwd: process.cwd(), ...opts }); });
 
-program.parseAsync();
+program.parseAsync().catch((e) => {
+  console.error(e?.message ?? e);
+  process.exit(1);
+});

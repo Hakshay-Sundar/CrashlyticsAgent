@@ -1,7 +1,7 @@
 {
   "firebase": {
-    "projectId": "my-firebase-project",
-    "appId": "1:123456789:android:abcdef0123456789"
+    "projectId": "acme-mobile-prod",
+    "appId": "1:987654321000:android:0a1b2c3d4e5f6a7b8c9d0e"
   },
   "issueSource": "firebase",
   "connectors": {
@@ -9,17 +9,33 @@
       "mcp": {
         "command": "npx",
         "args": ["-y", "firebase-tools", "experimental:mcp"],
-        "env": {}
+        "env": {
+          "GOOGLE_APPLICATION_CREDENTIALS": "/absolute/path/to/service-account.json"
+        }
       }
     }
   },
   "repos": [
     {
-      "name": "my-app",
-      "path": "/path/to/my-app",
+      "name": "A",
+      "path": ".",
       "remote": "origin",
       "provider": "github",
-      "buildCommand": "./gradlew build"
+      "buildCommand": "./gradlew :app:assembleRelease"
+    },
+    {
+      "name": "B",
+      "path": "shared/network",
+      "remote": "origin",
+      "provider": "bitbucket",
+      "buildCommand": "./gradlew :network:build"
+    },
+    {
+      "name": "C",
+      "path": "shared/ui",
+      "remote": "origin",
+      "provider": "bitbucket",
+      "buildCommand": "./gradlew :ui:build"
     }
   ],
   "concurrency": 4,
@@ -27,7 +43,7 @@
   "validation": "build",
   "buildParallelism": 2,
   "buildTimeoutSec": 1800,
-  "cleanExcludes": [".gradle/", "local.properties", "*.iml"],
+  "cleanExcludes": [".gradle/", "local.properties", "*.iml", "build/", ".idea/"],
   "models": {
     "orchestrator": "opus",
     "fetcher": "haiku",
@@ -42,9 +58,9 @@
     "limit": 25
   },
   "filters": {
-    "minAppVersion": null,
+    "minAppVersion": "4.2.0",
     "type": null,
-    "minEventCount": null,
+    "minEventCount": 50,
     "since": null
   }
 }
