@@ -1,2 +1,2 @@
-// TODO(task-20): re-export loadConfig, runPipeline
-export {};
+export { loadConfig } from './config.js';
+export { runPipeline } from './orchestrator/run.js';

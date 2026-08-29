@@ -9,7 +9,8 @@ const program = new Command();
 program.name('crashfix').version(version);
 
 program.command('init').description('scan repos, write config, verify auth')
-  .action(async () => { (await import('./cli/init.js')).initCommand(); });
+  .option('--force', 're-derive the repos list even if one exists')
+  .action(async (opts) => { await (await import('./cli/init.js')).initCommand({ cwd: process.cwd(), ...opts }); });
 program.command('run').description('run the full fix pipeline')
   .option('--limit <n>', 'max issues', (v) => parseInt(v, 10))
   .option('--min-version <v>').option('--type <crash|anr>')
@@ -17,12 +18,13 @@ program.command('run').description('run the full fix pipeline')
   .option('--since <date>').option('--concurrency <n>', 'workers', (v) => parseInt(v, 10))
   .option('--wave-size <n>', 'issues per wave', (v) => parseInt(v, 10))
   .option('--source <key>').option('--dry-run').option('--yes').option('--force')
-  .action(async (opts) => { (await import('./cli/run.js')).runCommand(opts); });
+  .action(async (opts) => { await (await import('./cli/run.js')).runCommand({ cwd: process.cwd(), ...opts }); });
 program.command('resume').description('continue from state.json')
-  .action(async () => { (await import('./cli/run.js')).resumeCommand(); });
+  .action(async () => { await (await import('./cli/run.js')).resumeCommand({ cwd: process.cwd() }); });
 program.command('status').description('print master report summary')
-  .action(async () => { (await import('./cli/status.js')).statusCommand(); });
+  .action(async () => { (await import('./cli/status.js')).statusCommand({ cwd: process.cwd() }); });
 program.command('clean').description('remove all worktrees / crashfix branches / state')
-  .action(async () => { (await import('./cli/clean.js')).cleanCommand(); });
+  .option('--yes', 'skip the confirmation prompt')
+  .action(async (opts) => { await (await import('./cli/clean.js')).cleanCommand({ cwd: process.cwd(), ...opts }); });
 
 program.parseAsync();
