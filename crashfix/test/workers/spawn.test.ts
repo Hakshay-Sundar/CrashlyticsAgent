@@ -22,20 +22,20 @@ describe('runWorker', () => {
     const run = makeRunWorker(
       fakeQuery([
         { type: 'assistant', message: {} },
-        { type: 'result', subtype: 'success', result: 'DONE', total_cost_usd: 0.02 },
+        { type: 'result', subtype: 'success', is_error: false, result: 'DONE', total_cost_usd: 0.02 },
       ]) as any,
     );
     expect(await run(base)).toEqual({ text: 'DONE', costUsd: 0.02 });
   });
 
-  it('retries once on an overloaded error then succeeds', async () => {
+  it('retries once on a retryable API error then succeeds', async () => {
     let calls = 0;
     const q = () => {
       calls++;
       const script =
         calls === 1
-          ? [{ type: 'result', subtype: 'error', error: 'overloaded', api_error_status: 529 }]
-          : [{ type: 'result', subtype: 'success', result: 'OK', total_cost_usd: 0 }];
+          ? [{ type: 'result', subtype: 'success', is_error: true, api_error_status: 529, result: 'overloaded', total_cost_usd: 0 }]
+          : [{ type: 'result', subtype: 'success', is_error: false, result: 'OK', total_cost_usd: 0 }];
       return (async function* () {
         for (const m of script) yield m;
       })();
@@ -45,12 +45,33 @@ describe('runWorker', () => {
     expect(calls).toBe(2);
   });
 
-  it('throws WorkerError naming the worker on a non-retryable error', async () => {
+  it('throws WorkerError naming the worker on a non-retryable API error', async () => {
     const run = makeRunWorker(
       fakeQuery([
-        { type: 'result', subtype: 'error', error: 'invalid_request', api_error_status: 400 },
+        { type: 'result', subtype: 'success', is_error: true, api_error_status: 400, result: 'invalid_request', total_cost_usd: 0 },
       ]) as any,
     );
     await expect(run(base)).rejects.toThrow(/analyzer.*invalid_request/);
+  });
+
+  it('throws WorkerError on a structured terminal error', async () => {
+    const run = makeRunWorker(
+      fakeQuery([{ type: 'result', subtype: 'error_max_turns', errors: ['ran out of turns'] }]) as any,
+    );
+    await expect(run(base)).rejects.toThrow(/analyzer.*error_max_turns.*ran out of turns/s);
+  });
+
+  it('throws (not returns error text as success) when a retryable API error exhausts retries', async () => {
+    let calls = 0;
+    const run = makeRunWorker(
+      (() => {
+        calls++;
+        return (async function* () {
+          yield { type: 'result', subtype: 'success', is_error: true, api_error_status: 529, result: 'overloaded', total_cost_usd: 0 };
+        })();
+      }) as any,
+    );
+    await expect(run({ ...base, maxRetries: 0 })).rejects.toThrow(/analyzer.*529.*overloaded/s);
+    expect(calls).toBe(1);
   });
 });
