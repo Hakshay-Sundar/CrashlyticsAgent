@@ -2,8 +2,8 @@ import type { Issue } from '../types.js';
 import type { Logger } from '../logger.js';
 import type { McpStdioServerConfig } from '@anthropic-ai/claude-agent-sdk';
 
-// TODO(task-8): import RunWorker from workers/spawn
-export type RunWorker = (opts: any) => Promise<{ text: string; costUsd: number }>;
+export type { RunWorker } from '../workers/spawn.js';
+import type { RunWorker } from '../workers/spawn.js';
 
 export interface FetchParams {
   limit: number;
