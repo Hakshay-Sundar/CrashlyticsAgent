@@ -23,6 +23,22 @@ export const DEFAULT_MODELS: Record<WorkerName, string> = {
   reporter: 'haiku',
 };
 
+const KNOWN_TOP_LEVEL_KEYS = [
+  'firebase',
+  'issueSource',
+  'connectors',
+  'repos',
+  'concurrency',
+  'waveSize',
+  'validation',
+  'buildParallelism',
+  'buildTimeoutSec',
+  'cleanExcludes',
+  'models',
+  'defaults',
+  'filters',
+];
+
 const mcpStdio = z.object({
   command: z.string(),
   args: z.array(z.string()).default([]),
@@ -114,18 +130,29 @@ export function loadConfig(root: string): CrashfixConfig {
     if (!first) throw new Error(`invalid config: unknown error`);
     throw new Error(`invalid config at "${first.path.join('.')}": ${first.message}`);
   }
+
+  // Warn about unknown top-level keys
+  if (typeof raw === 'object' && raw !== null && !Array.isArray(raw)) {
+    const rawKeys = Object.keys(raw);
+    const unknownKeys = rawKeys.filter((key) => !KNOWN_TOP_LEVEL_KEYS.includes(key));
+    for (const key of unknownKeys) {
+      console.warn(`crashfix.config.json: unknown key "${key}" (ignored)`);
+    }
+  }
+
   return parsed.data;
 }
 
 export function mergeCliOverrides(cfg: CrashfixConfig, o: RunCliOptions): CrashfixConfig {
-  const waveSize = o.waveSize ?? cfg.waveSize;
-  const concurrency = Math.min(o.concurrency ?? cfg.concurrency, waveSize);
+  const waveSize = Math.min(o.waveSize ?? cfg.waveSize, 10);
+  const concurrency = Math.min(o.concurrency ?? cfg.concurrency, waveSize, 8);
+  const limit = Math.min(o.limit ?? cfg.defaults.limit, 25);
   return {
     ...cfg,
     waveSize,
     concurrency,
     issueSource: o.source ?? cfg.issueSource,
-    defaults: { limit: o.limit ?? cfg.defaults.limit },
+    defaults: { limit },
     filters: {
       minAppVersion: o.minVersion ?? cfg.filters.minAppVersion,
       type: o.type ?? cfg.filters.type,

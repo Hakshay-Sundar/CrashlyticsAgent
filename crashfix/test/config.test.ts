@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import { mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -33,6 +33,16 @@ describe('loadConfig', () => {
     expect(() => loadConfig(dir)).toThrow(/validation/);
   });
 
+  it('warns about unknown top-level keys', () => {
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const dir = writeConfig({ firebase: { projectId: 'p', appId: 'a' }, concurency: 9, typo: 'key' });
+    const cfg = loadConfig(dir);
+    expect(warnSpy).toHaveBeenCalledWith('crashfix.config.json: unknown key "concurency" (ignored)');
+    expect(warnSpy).toHaveBeenCalledWith('crashfix.config.json: unknown key "typo" (ignored)');
+    expect(cfg.concurrency).toBe(4); // Default, not 9
+    warnSpy.mockRestore();
+  });
+
   it('mergeCliOverrides clamps concurrency to waveSize and applies limit', () => {
     const dir = writeConfig({ firebase: { projectId: 'p', appId: 'a' }, waveSize: 3 });
     const cfg = loadConfig(dir);
@@ -40,5 +50,10 @@ describe('loadConfig', () => {
     expect(merged.concurrency).toBe(3);
     expect(merged.defaults.limit).toBe(10);
     expect(merged.filters.type).toBe('anr');
+    // Also verify clamping for out-of-range overrides
+    const merged2 = mergeCliOverrides(cfg, { limit: 999, waveSize: 99, concurrency: 20 });
+    expect(merged2.defaults.limit).toBe(25); // Clamped to max
+    expect(merged2.waveSize).toBe(10); // Clamped to max
+    expect(merged2.concurrency).toBe(8); // Clamped to min(20, 10, 8) = 8
   });
 });
