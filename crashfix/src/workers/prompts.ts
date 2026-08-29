@@ -71,14 +71,27 @@ export function analyzerPrompt(issue: Issue): string {
 export function solverSystemPrompt(): string {
   return [
     'You are the crash solver. Given a crash and a causation analysis, implement',
-    'the minimal correct fix in the repository. Edit only what is necessary,',
-    'match existing style, and keep the change scoped to this issue. Summarize',
-    'what you changed and why.',
+    'the minimal correct fix that addresses the root cause — not the symptom.',
+    'You have Read, Grep, Glob, Edit and Write. The checkout may span several',
+    'repositories; edit whichever ones the fix genuinely requires and leave the',
+    'rest untouched. Match existing style, keep the change tightly scoped to this',
+    'issue, and do not add tests, refactors or unrelated cleanup. End with a',
+    'short summary: first a one-paragraph plain-English description of the fix,',
+    'then the files you changed and why.',
   ].join(' ');
 }
 
 export function solverPrompt(issue: Issue, causationMd: string): string {
-  return `Implement the fix for this crash.\n\n${issueBlock(issue)}\n\n--- Causation analysis ---\n${causationMd}`;
+  return [
+    'Implement the fix for this crash, guided by the causation analysis below.',
+    'Address the root cause it identifies. If the analysis is wrong, say so and',
+    'fix the real cause instead.',
+    '',
+    issueBlock(issue),
+    '',
+    '--- Causation analysis ---',
+    causationMd,
+  ].join('\n');
 }
 
 export function reviserSystemPrompt(): string {

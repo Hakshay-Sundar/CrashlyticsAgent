@@ -8,6 +8,7 @@ export interface Git {
   resetHard(cwd: string, ref: string): Promise<void>;
   clean(cwd: string, excludes: string[]): Promise<void>;
   status(cwd: string): Promise<{ path: string }[]>;
+  diff(cwd: string): Promise<string>;
   add(cwd: string, paths: string[]): Promise<void>;
   commit(cwd: string, message: string): Promise<string>;
   push(cwd: string, remote: string, branch: string): Promise<void>;
@@ -57,6 +58,7 @@ export const realGit: Git = {
       .filter(Boolean)
       .map((l) => ({ path: l.slice(3).trim() }));
   },
+  diff: (cwd) => g(cwd, ['--no-pager', 'diff']),
   async add(cwd, paths) {
     await g(cwd, ['add', ...paths]);
   },

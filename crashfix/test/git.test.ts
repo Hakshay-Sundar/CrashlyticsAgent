@@ -23,6 +23,13 @@ describe('realGit', () => {
     expect(changed.map((c) => c.path)).toContain('app.txt');
   });
 
+  it('diff shows unstaged changes to a tracked file', async () => {
+    writeFileSync(join(root, 'app.txt'), 'mutated line\n');
+    const out = await git.diff(root);
+    expect(out).toContain('+mutated line');
+    expect(out).toContain('app.txt');
+  });
+
   it('resetHard + clean returns to a pristine base', async () => {
     const base = await git.currentBranch(root);
     writeFileSync(join(root, 'junk.txt'), 'x');
