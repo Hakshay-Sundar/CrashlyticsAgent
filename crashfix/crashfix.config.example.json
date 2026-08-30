@@ -1,0 +1,66 @@
+{
+  "firebase": {
+    "projectId": "acme-mobile-prod",
+    "appId": "1:987654321000:android:0a1b2c3d4e5f6a7b8c9d0e"
+  },
+  "issueSource": "firebase",
+  "connectors": {
+    "firebase": {
+      "mcp": {
+        "command": "npx",
+        "args": ["-y", "firebase-tools", "experimental:mcp"],
+        "env": {
+          "GOOGLE_APPLICATION_CREDENTIALS": "/absolute/path/to/service-account.json"
+        }
+      }
+    }
+  },
+  "repos": [
+    {
+      "name": "A",
+      "path": ".",
+      "remote": "origin",
+      "provider": "github",
+      "buildCommand": "./gradlew :app:assembleRelease"
+    },
+    {
+      "name": "B",
+      "path": "shared/network",
+      "remote": "origin",
+      "provider": "bitbucket",
+      "buildCommand": "./gradlew :network:build"
+    },
+    {
+      "name": "C",
+      "path": "shared/ui",
+      "remote": "origin",
+      "provider": "bitbucket",
+      "buildCommand": "./gradlew :ui:build"
+    }
+  ],
+  "concurrency": 4,
+  "waveSize": 5,
+  "validation": "build",
+  "buildParallelism": 2,
+  "buildTimeoutSec": 1800,
+  "cleanExcludes": [".gradle/", "local.properties", "*.iml", "build/", ".idea/"],
+  "models": {
+    "orchestrator": "opus",
+    "fetcher": "haiku",
+    "triager": "haiku",
+    "analyzer": "opus",
+    "solver": "sonnet",
+    "reviser": "sonnet",
+    "publisher": "haiku",
+    "reporter": "haiku"
+  },
+  "defaults": {
+    "limit": 25
+  },
+  "filters": {
+    "minAppVersion": "4.2.0",
+    "type": null,
+    "minEventCount": 50,
+    "since": null
+  }
+}

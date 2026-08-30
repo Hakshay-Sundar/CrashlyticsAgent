@@ -1,0 +1,37 @@
+{
+  "issues": [
+    {
+      "id": "5f3a9c1e0000000000000001",
+      "title": "NullPointerException in FeedViewModel.onRefresh",
+      "type": "crash",
+      "eventCount": 4213,
+      "userCount": 1180,
+      "firstSeenVersion": "4.1.0",
+      "lastSeenVersion": "4.3.2",
+      "stackTrace": "java.lang.NullPointerException: Attempt to invoke virtual method 'int java.util.List.size()' on a null object reference\n\tat com.example.feed.FeedViewModel.onRefresh(FeedViewModel.kt:88)\n\tat com.example.feed.FeedFragment$onViewCreated$2.invoke(FeedFragment.kt:141)"
+    },
+    {
+      "id": "5f3a9c1e0000000000000002",
+      "title": "ANR in MainActivity.onCreate",
+      "type": "anr",
+      "eventCount": 902,
+      "userCount": 640,
+      "firstSeenVersion": "4.2.0",
+      "lastSeenVersion": "4.3.2",
+      "stackTrace": "ANR Input dispatching timed out (main thread not responding)\n\tat com.example.MainActivity.loadConfigBlocking(MainActivity.kt:57)\n\tat com.example.MainActivity.onCreate(MainActivity.kt:33)"
+    },
+    {
+      "id": "5f3a9c1e0000000000000003",
+      "title": "IllegalStateException in CheckoutRepository.confirm",
+      "subtitle": "CheckoutRepository.kt",
+      "type": "crash",
+      "eventCount": 311,
+      "userCount": 205,
+      "firstSeenVersion": "4.3.0",
+      "lastSeenVersion": "4.3.2",
+      "stackTrace": "java.lang.IllegalStateException: Cannot confirm an order with no payment method\n\tat com.example.checkout.CheckoutRepository.confirm(CheckoutRepository.kt:212)",
+      "sampleEventUrl": "https://console.firebase.google.com/project/example/crashlytics/app/android:com.example/issues/5f3a9c1e0000000000000003",
+      "blameFile": "app/src/main/java/com/example/checkout/CheckoutRepository.kt"
+    }
+  ]
+}
