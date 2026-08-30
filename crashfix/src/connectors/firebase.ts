@@ -43,11 +43,15 @@ function extractJsonBlock(text: string): unknown {
   }
 }
 
-export const firebaseFactory: ConnectorFactory = ({ runWorker, mcp, log }) => ({
+export const firebaseFactory: ConnectorFactory = ({ runWorker, mcp, log, project }) => ({
   key: 'firebase',
   async fetchTopIssues({ limit, filters }) {
+    const target = project?.projectId
+      ? `Firebase project "${project.projectId}", app id "${project.appId}".`
+      : `the Firebase project configured for this directory.`;
     const prompt = [
-      `List the top ${limit} Crashlytics issues for this app.`,
+      `List the top ${limit} Crashlytics issues for ${target}`,
+      `Pass the project id and app id to the MCP tools if they take them.`,
       `Filters: ${JSON.stringify(filters)}. Apply them; if the API cannot, filter yourself.`,
       `Use the Firebase MCP tools (likely named ${MCP_TOOL_HINTS.join(', ')}; discover the`,
       `actual tool names at runtime) to fetch issue metadata and a representative stack trace.`,

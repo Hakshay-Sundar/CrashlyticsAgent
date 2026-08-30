@@ -24,6 +24,8 @@ export interface ConnectorDeps {
   runWorker: RunWorker;
   mcp: McpStdioServerConfig | undefined;
   log: Logger;
+  /** Firebase project/app identity from config, when the source needs it. */
+  project?: { projectId: string; appId: string };
 }
 
 export type ConnectorFactory = (deps: ConnectorDeps) => Connector;

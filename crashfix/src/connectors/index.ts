@@ -20,5 +20,11 @@ export function selectConnector(
       `unknown issue source "${key}". available: ${Object.keys(connectorRegistry).join(', ')}`
     );
   }
-  return factory({ ...deps, mcp: cfg.connectors[key]?.mcp });
+  let mcp = cfg.connectors[key]?.mcp;
+  // Target the configured Firebase project at the MCP process itself, so the
+  // server doesn't depend on a `.firebaserc` / `firebase use` in the cwd.
+  if (mcp && cfg.firebase?.projectId && !mcp.args?.includes('--project')) {
+    mcp = { ...mcp, args: [...(mcp.args ?? []), '--project', cfg.firebase.projectId] };
+  }
+  return factory({ ...deps, mcp, project: cfg.firebase });
 }
