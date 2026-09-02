@@ -1,6 +1,7 @@
 import { mkdirSync, writeFileSync } from 'node:fs';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import type { RunState } from './types.js';
+import type { Ledger } from './ledger.js';
 
 export function slugify(title: string, issueId: string): string {
   const base = title.normalize('NFKD').replace(/[^\x00-\x7F]/g, '')
@@ -39,4 +40,34 @@ export function writeReport(root: string, state: RunState): void {
   const dir = join(root, '.crashfix');
   mkdirSync(dir, { recursive: true });
   writeFileSync(join(dir, 'report.md'), renderReport(state));
+}
+
+export function renderMaster(ledger: Ledger): string {
+  const esc = (s: unknown) => String(s ?? '').replace(/\|/g, '\\|').replace(/\n/g, ' ');
+  const entries = Object.values(ledger.entries)
+    .sort((a, b) => b.lastSeenAt.localeCompare(a.lastSeenAt));
+
+  const counts: Record<string, number> = {};
+  for (const e of entries) counts[e.status] = (counts[e.status] ?? 0) + 1;
+
+  const summary = ['## Summary', '', ...Object.entries(counts).map(([k, v]) => `- ${k}: ${v}`), ''];
+  const header = '| Issue | Type | Status | First seen | Last seen | PRs | URL |';
+  const sep = '|' + '---|'.repeat(7);
+  const rows = entries.map((e) => {
+    const prs = Object.entries(e.prUrls).map(([repo, url]) => `[${repo}](${url})`).join(' ');
+    const link = e.url ? `[link](${e.url})` : '';
+    return `| ${esc(e.id)} — ${esc(e.title)} | ${esc(e.type)} | ${esc(e.status)} | ` +
+      `${e.firstSeenAt.slice(0, 10)} | ${e.lastSeenAt.slice(0, 10)} | ${prs} | ${link} |`;
+  });
+
+  return [
+    '# crashfix — master issue log', '',
+    `_Last updated: ${new Date().toISOString()}_`, '',
+    ...summary, header, sep, ...rows, '',
+  ].join('\n');
+}
+
+export function writeMaster(path: string, ledger: Ledger): void {
+  mkdirSync(dirname(path), { recursive: true });
+  writeFileSync(path, renderMaster(ledger));
 }

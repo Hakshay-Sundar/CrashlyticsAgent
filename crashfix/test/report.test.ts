@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
-import { renderReport, slugify } from '../src/report.js';
+import { renderReport, renderMaster, slugify } from '../src/report.js';
+import type { Ledger } from '../src/ledger.js';
 
 const state = {
   version: 1, currentWave: 1, waveOrder: [['i1', 'i2']], phase: 'wave',
@@ -51,5 +52,49 @@ describe('renderReport', () => {
     const md = renderReport(state);
     expect(md).toMatch(/PUSHED: 1/);
     expect(md).toMatch(/REJECTED: 1/);
+  });
+});
+
+const ledger: Ledger = {
+  version: 1,
+  entries: {
+    old: {
+      id: 'old', url: 'https://c/old', title: 'stale | crash', type: 'crash',
+      firstSeenAt: '2026-01-01T09:00:00.000Z', lastSeenAt: '2026-01-02T09:00:00.000Z',
+      status: 'REJECTED', prUrls: {}, branch: 'crashfix/old',
+    },
+    fresh: {
+      id: 'fresh', url: 'https://c/fresh', title: 'NPE in Feed', type: 'crash',
+      firstSeenAt: '2026-03-01T09:00:00.000Z', lastSeenAt: '2026-03-05T09:00:00.000Z',
+      status: 'PUSHED', prUrls: { app: 'https://gh/pr/7' }, branch: 'crashfix/fresh',
+    },
+  },
+};
+
+describe('renderMaster', () => {
+  it('has a summary count per status', () => {
+    const md = renderMaster(ledger);
+    expect(md).toMatch(/# crashfix — master issue log/);
+    expect(md).toMatch(/PUSHED: 1/);
+    expect(md).toMatch(/REJECTED: 1/);
+  });
+
+  it('renders one row per entry, most-recently-seen first', () => {
+    const md = renderMaster(ledger);
+    const body = md.slice(md.indexOf('| Issue |'));
+    expect(body.indexOf('fresh')).toBeLessThan(body.indexOf('old'));
+  });
+
+  it('links PRs and the issue URL and escapes pipes in the title', () => {
+    const md = renderMaster(ledger);
+    expect(md).toContain('[app](https://gh/pr/7)');
+    expect(md).toContain('https://c/fresh');
+    expect(md).toContain('stale \\| crash');
+  });
+
+  it('renders the date portion of the timestamps', () => {
+    const md = renderMaster(ledger);
+    expect(md).toContain('2026-03-01');
+    expect(md).toContain('2026-03-05');
   });
 });
