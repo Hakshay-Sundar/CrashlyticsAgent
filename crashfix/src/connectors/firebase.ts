@@ -1,6 +1,6 @@
 import { z } from 'zod';
 import type { Issue } from '../types.js';
-import type { ConnectorFactory } from './contract.js';
+import { parseIssueRef, type ConnectorFactory } from './contract.js';
 
 // NOTE: verify against installed firebase-tools — these experimental Crashlytics
 // MCP tool names drift between firebase-tools releases. They are passed to the
@@ -83,5 +83,50 @@ export const firebaseFactory: ConnectorFactory = ({ runWorker, mcp, log, project
       else log.warn('dropping malformed issue from fetcher', r.error.issues[0]);
     }
     return out.slice(0, limit);
+  },
+
+  async fetchIssuesByRef(refs) {
+    const ids = refs.map(parseIssueRef);
+    const prompt = [
+      `For each of these Crashlytics issue ids: ${JSON.stringify(ids)}`,
+      `(project ${project?.projectId ?? 'configured for this directory'}, app ${project?.appId ?? ''}),`,
+      `fetch full issue metadata and a representative stack trace using the Firebase MCP tools`,
+      `(likely ${MCP_TOOL_HINTS.join(', ')}; discover the real names at runtime).`,
+      `type must be exactly "crash" or "anr" (lowercase).`,
+      `Respond with ONLY a fenced \`\`\`json block: {"issues":[{id,title,subtitle,type,`,
+      `eventCount,userCount,firstSeenVersion,lastSeenVersion,stackTrace,sampleEventUrl}]}`,
+    ].join('\n');
+
+    const { text } = await runWorker({
+      worker: 'fetcher',
+      model: 'haiku',
+      cwd: process.cwd(),
+      systemPrompt:
+        'You are a data-extraction agent for Firebase Crashlytics. Output only what is asked.',
+      prompt,
+      allowedTools: ['mcp__firebase'],
+      mcpServers: mcp ? { firebase: mcp } : undefined,
+    });
+
+    const parsed = extractJsonBlock(text) as { issues?: unknown[] };
+    if (!Array.isArray(parsed.issues)) {
+      log.warn('fetcher response had no "issues" array', parsed);
+      return [];
+    }
+    const byId = new Map(ids.map((id, i) => [id, refs[i]!]));
+    const out: Issue[] = [];
+    for (const raw of parsed.issues) {
+      const r = issueSchema.safeParse(raw);
+      if (!r.success) {
+        log.warn('dropping malformed issue from fetcher', r.error.issues[0]);
+        continue;
+      }
+      if (!r.data.sampleEventUrl) {
+        const ref = byId.get(r.data.id);
+        if (ref) r.data.sampleEventUrl = ref;
+      }
+      out.push(r.data);
+    }
+    return out;
   },
 });

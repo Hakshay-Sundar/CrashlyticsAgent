@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { firebaseFactory } from '../../src/connectors/firebase.js';
+import { parseIssueRef } from '../../src/connectors/contract.js';
 
 const goodJson = JSON.stringify({ issues: [{
   id: 'ABC', title: 'NPE Feed', subtitle: 'FeedView.kt', type: 'crash',
@@ -76,5 +77,43 @@ describe('firebaseConnector', () => {
     const c = firebaseFactory(deps('```\n' + goodJson + '\n```'));
     const issues = await c.fetchTopIssues({ limit: 25, filters: { ...noFilters } });
     expect(issues[0].id).toBe('ABC');
+  });
+});
+
+describe('parseIssueRef', () => {
+  it('pulls the id out of a console URL', () => {
+    expect(parseIssueRef(
+      'https://console.firebase.google.com/project/x/crashlytics/app/android:y/issues/5f3a9c1e01?time=last-7d',
+    )).toBe('5f3a9c1e01');
+  });
+  it('passes a bare id through, trimmed', () => {
+    expect(parseIssueRef('  ABC123  ')).toBe('ABC123');
+  });
+});
+
+describe('firebaseConnector.fetchIssuesByRef', () => {
+  it('resolves each ref and backfills sampleEventUrl from the ref', async () => {
+    const url = 'https://console.firebase/app/issues/ABC';
+    const json = JSON.stringify({ issues: [{
+      id: 'ABC', title: 'NPE Feed', subtitle: '', type: 'crash',
+      eventCount: 900, userCount: 40, firstSeenVersion: '4.1.0', lastSeenVersion: '4.3.0',
+      stackTrace: 'NPE\n at X.kt:1',
+    }] });
+    const c = firebaseFactory(deps('```json\n' + json + '\n```'));
+    const issues = await c.fetchIssuesByRef!([url]);
+    expect(issues).toHaveLength(1);
+    expect(issues[0].id).toBe('ABC');
+    expect(issues[0].sampleEventUrl).toBe(url);
+  });
+
+  it('keeps a model-supplied sampleEventUrl when present', async () => {
+    const json = JSON.stringify({ issues: [{
+      id: 'ABC', title: 'NPE', subtitle: '', type: 'crash', eventCount: 1, userCount: 1,
+      firstSeenVersion: '1', lastSeenVersion: '2', stackTrace: 's',
+      sampleEventUrl: 'https://real/url',
+    }] });
+    const c = firebaseFactory(deps('```json\n' + json + '\n```'));
+    const issues = await c.fetchIssuesByRef!(['ABC']);
+    expect(issues[0].sampleEventUrl).toBe('https://real/url');
   });
 });

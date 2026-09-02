@@ -18,6 +18,14 @@ export interface FetchParams {
 export interface Connector {
   key: string;
   fetchTopIssues(params: FetchParams): Promise<Issue[]>;
+  fetchIssuesByRef?(refs: string[]): Promise<Issue[]>;
+}
+
+/** Extract a Crashlytics issue id from a console URL, or pass a bare id through. */
+export function parseIssueRef(ref: string): string {
+  const s = ref.trim();
+  const m = /\/issues\/([^/?#]+)/.exec(s);
+  return m ? m[1]! : s;
 }
 
 export interface ConnectorDeps {

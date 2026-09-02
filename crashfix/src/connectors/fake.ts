@@ -1,5 +1,5 @@
 import type { Issue } from '../types.js';
-import type { Connector, ConnectorDeps, ConnectorFactory, FetchParams } from './contract.js';
+import { parseIssueRef, type Connector, type ConnectorDeps, type ConnectorFactory, type FetchParams } from './contract.js';
 
 export function fakeConnector(issues: Issue[]): ConnectorFactory {
   return () => ({
@@ -10,6 +10,10 @@ export function fakeConnector(issues: Issue[]): ConnectorFactory {
       if (filters.minEventCount != null) list = list.filter((i) => i.eventCount >= filters.minEventCount!);
       if (filters.minAppVersion) list = list.filter((i) => i.lastSeenVersion >= filters.minAppVersion!);
       return list.slice(0, limit);
+    },
+    async fetchIssuesByRef(refs: string[]): Promise<Issue[]> {
+      const ids = new Set(refs.map(parseIssueRef));
+      return issues.filter((i) => ids.has(i.id) || refs.some((r) => i.sampleEventUrl.includes(r)));
     },
   });
 }
