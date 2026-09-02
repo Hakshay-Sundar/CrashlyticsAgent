@@ -4,7 +4,7 @@
 // three terminal paths: pushed, revised-then-pushed, rejected. The rejected
 // issue sits in wave 0 so the following wave proves its slot is reusable.
 import { describe, it, expect } from 'vitest';
-import { readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { realGit as git } from '../../src/git.js';
 import { runPipeline } from '../../src/orchestrator/run.js';
@@ -117,5 +117,64 @@ describe('crashfix e2e', () => {
     // (not merely at pool teardown), so it never leaked into wave 1
     const i3Branch = state.issues['i3'].branch;
     await expect(git.revParse(join(root, 'B'), i3Branch)).rejects.toThrow();
+  });
+
+  it('writes a ledger + master doc and skips resolved issues on a second run', async () => {
+    const { root } = makeNestedRepos();
+    seedSource(root);
+    // ledger under .crashfix/ (dirty-check-excluded); absolute so run 2 can share it
+    const ledgerPath = join(root, '.crashfix', 'ext-ledger.json');
+    const baseCfg: any = {
+      repos: [], concurrency: 2, waveSize: 5, validation: 'none', buildParallelism: 2,
+      buildTimeoutSec: 60, defaults: { limit: 25 }, filters: {}, models: {}, issueSource: 'fake',
+      masterDocPath: '.crashfix/master.md', ledgerPath,
+    };
+    const deps: any = {
+      git, log: nolog,
+      connector: {
+        key: 'fake',
+        fetchTopIssues: async () => [mk('k1')],
+      },
+      runWorker: async (o: any) => {
+        if (o.worker === 'analyzer') return { text: '# c\nx\n\nVERDICT: FIXABLE', costUsd: 0 };
+        if (o.worker === 'solver' || o.worker === 'reviser') {
+          const f = join(o.cwd, 'B', 'app', 'Feature.kt');
+          writeFileSync(f, readFileSync(f, 'utf8').replace('feed!!', 'feed?'));
+          return { text: 'fix\n\nmore', costUsd: 0 };
+        }
+        if (o.worker === 'publisher') {
+          return { text: '```json\n{"commitMessage":"fix","prTitle":"t","prBody":"b"}\n```', costUsd: 0 };
+        }
+        return { text: '', costUsd: 0 };
+      },
+      provider: () => ({ name: 'github', openPr: async () => ({ url: 'https://gh/pr/1', id: '1' }), updatePrBody: async () => {} }),
+      http: async () => ({ status: 200, json: {} }),
+      launchReview: async (items: any[]) => items.map((i) => ({ issueId: i.record.issue.id, verdict: 'approve' })),
+      exec: async () => ({ code: 0, output: '' }),
+    };
+
+    const s1 = await runPipeline({ root, cfg: baseCfg, deps });
+    expect(s1.issues.k1.status).toBe('PUSHED');
+    expect(existsSync(ledgerPath)).toBe(true);
+    expect(existsSync(join(root, '.crashfix', 'master.md'))).toBe(true);
+    const ledger = JSON.parse(readFileSync(ledgerPath, 'utf8'));
+    expect(ledger.entries.k1.status).toBe('PUSHED');
+
+    // Second run in a fresh repo but pointed at the SAME external ledger:
+    // k1 is already PUSHED there, so only k2 should be processed.
+    const { root: root2 } = makeNestedRepos();
+    seedSource(root2);
+    const s2 = await runPipeline({
+      root: root2,
+      cfg: { ...baseCfg, ledgerPath },
+      deps: {
+        ...deps,
+        connector: {
+          key: 'fake',
+          fetchTopIssues: async () => [mk('k1'), mk('k2')],
+        },
+      },
+    });
+    expect(Object.keys(s2.issues)).toEqual(['k2']); // k1 skipped — already PUSHED in the shared ledger
   });
 });
