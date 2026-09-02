@@ -18,6 +18,8 @@ program.command('run').description('run the full fix pipeline')
   .option('--since <date>').option('--concurrency <n>', 'workers', (v) => parseInt(v, 10))
   .option('--wave-size <n>', 'issues per wave', (v) => parseInt(v, 10))
   .option('--source <key>').option('--dry-run').option('--yes').option('--force')
+  .option('--issue-url <url>', 'analyse a specific Crashlytics issue (repeatable)',
+          (v: string, acc: string[]) => (acc.push(v), acc), [] as string[])
   .action(async (opts) => { await (await import('./cli/run.js')).runCommand({ cwd: process.cwd(), ...opts }); });
 program.command('resume').description('continue from state.json')
   .action(async () => { await (await import('./cli/run.js')).resumeCommand({ cwd: process.cwd() }); });

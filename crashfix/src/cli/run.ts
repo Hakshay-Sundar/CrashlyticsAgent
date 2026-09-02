@@ -37,6 +37,7 @@ export async function runCommand(opts: RunCliOptions & { cwd: string }): Promise
     dryRun: opts.dryRun,
     autoApprove: opts.yes,
     force: opts.force,
+    refs: opts.issueUrl,
   });
   console.log(renderReport(state));
 }
