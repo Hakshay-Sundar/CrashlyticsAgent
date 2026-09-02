@@ -41,6 +41,8 @@ describe('crashfix e2e', () => {
     const cfg: any = {
       repos: [], concurrency: 2, waveSize: 2, validation: 'none', buildParallelism: 2,
       buildTimeoutSec: 60, defaults: { limit: 25 }, filters: {}, models: {}, issueSource: 'fake',
+      // temp ledger under .crashfix/ so the run never touches ~/.crashfix/
+      ledgerPath: join(root, '.crashfix', 'test-ledger.json'),
     };
 
     const state = await runPipeline({

@@ -3,10 +3,11 @@
 // done. Dry-run analyzes only; resume picks up from state.currentWave without
 // re-fetching. A SIGINT during the run persists state before exiting 130.
 import { mkdirSync, writeFileSync } from 'node:fs';
-import { dirname, join } from 'node:path';
+import { dirname, isAbsolute, join } from 'node:path';
 import type { CrashfixConfig } from '../config.js';
 import { discoverRepos } from '../reposcan.js';
-import { writeReport } from '../report.js';
+import { writeMaster, writeReport } from '../report.js';
+import { ledgerPathFor, loadLedger, mergeState, saveLedger } from '../ledger.js';
 import { loadState, newState, saveState } from '../state.js';
 import type { IssueRecord, RepoInfo, RunState } from '../types.js';
 import { runAnalyzer } from '../workers/analyzer.js';
@@ -18,11 +19,12 @@ import { Semaphore } from './semaphore.js';
 export interface RunPipelineOptions {
   root: string;
   cfg: CrashfixConfig;
-  deps: Omit<Deps, 'root' | 'cfg' | 'pool' | 'sem' | 'base'>;
+  deps: Omit<Deps, 'root' | 'cfg' | 'pool' | 'sem' | 'base' | 'ledger' | 'ledgerPath' | 'masterDocPath'>;
   dryRun?: boolean;
   autoApprove?: boolean;
   /** Bypass the uncommitted-changes guard (`--force`). */
   force?: boolean;
+  refs?: string[];
 }
 
 type CoreDeps = RunPipelineOptions['deps'];
@@ -92,7 +94,9 @@ export async function runPipeline(o: RunPipelineOptions): Promise<RunState> {
 
   const cfg = { ...o.cfg, repos: repos as CrashfixConfig['repos'] };
   const state = loadState(o.root) ?? newState(cfg);
-  return core(o.root, cfg, base, o.deps, state, { dryRun: o.dryRun, autoApprove: o.autoApprove });
+  return core(o.root, cfg, base, o.deps, state, {
+    dryRun: o.dryRun, autoApprove: o.autoApprove, refs: o.refs,
+  });
 }
 
 export async function resumePipeline(root: string, deps: CoreDeps): Promise<RunState> {
@@ -111,7 +115,7 @@ async function core(
   base: string,
   raw: CoreDeps,
   state: RunState,
-  opts: { dryRun?: boolean; autoApprove?: boolean },
+  opts: { dryRun?: boolean; autoApprove?: boolean; refs?: string[] },
 ): Promise<RunState> {
   const repos = cfg.repos as RepoInfo[];
   const pool = createPool({
@@ -121,7 +125,11 @@ async function core(
     git: raw.git, log: raw.log,
   });
   const sem = new Semaphore(cfg.buildParallelism);
-  const d: Deps = { ...raw, root, cfg, pool, sem, base };
+  const ledgerPath = ledgerPathFor(cfg, root);
+  const ledger = loadLedger(ledgerPath);
+  const masterRel = cfg.masterDocPath ?? '.crashfix/master.md';
+  const masterDocPath = isAbsolute(masterRel) ? masterRel : join(root, masterRel);
+  const d: Deps = { ...raw, root, cfg, pool, sem, base, ledger, ledgerPath, masterDocPath };
 
   saveState(root, state);
 
@@ -131,7 +139,7 @@ async function core(
   try {
     // Only ever fetch from a pristine state — fetchPhase wipes state.issues.
     if (state.phase === 'fetch') {
-      await fetchPhase(d, state);
+      await fetchPhase(d, state, opts.refs);
       state.phase = 'wave';
       saveState(root, state);
     }
@@ -143,7 +151,7 @@ async function core(
       } finally {
         await pool.destroy();
       }
-      persist(root, state);
+      persist(d, state, { ledger: false });
       return state;
     }
 
@@ -210,16 +218,21 @@ async function core(
     }
 
     state.phase = 'done';
-    persist(root, state);
+    persist(d, state);
     return state;
   } finally {
     process.removeListener('SIGINT', onSigint);
   }
 }
 
-function persist(root: string, state: RunState): void {
-  saveState(root, state);
-  writeReport(root, state);
+function persist(d: Deps, state: RunState, opts: { ledger?: boolean } = {}): void {
+  saveState(d.root, state);
+  writeReport(d.root, state);
+  if (opts.ledger !== false) {
+    mergeState(d.ledger, state);
+    saveLedger(d.ledgerPath, d.ledger);
+    writeMaster(d.masterDocPath, d.ledger);
+  }
 }
 
 /** Slim dry-run path: acquire slot -> reset -> analyze -> write report -> release. */
@@ -253,5 +266,5 @@ async function dryAnalyze(d: Deps, state: RunState, id: string): Promise<void> {
     d.pool.release(slot);
     rec.slot = undefined;
   }
-  persist(d.root, state);
+  persist(d, state, { ledger: false });
 }

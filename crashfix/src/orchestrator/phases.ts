@@ -9,7 +9,9 @@ import type { Connector } from '../connectors/contract.js';
 import type { Git } from '../git.js';
 import type { Logger } from '../logger.js';
 import type { HttpFn, Provider } from '../publish/index.js';
-import { slugify, writeReport } from '../report.js';
+import { slugify, writeMaster, writeReport } from '../report.js';
+import { isDone, mergeState, saveLedger } from '../ledger.js';
+import type { Ledger } from '../ledger.js';
 import { saveState } from '../state.js';
 import type { launchReview } from '../tui/review.js';
 import type { ReviewItem } from '../tui/review.js';
@@ -38,6 +40,9 @@ export interface Deps {
   launchReview: typeof launchReview;
   exec: ExecFn;
   base: string;
+  ledger: Ledger;
+  ledgerPath: string;
+  masterDocPath: string;
 }
 
 const MAX_REVISE_ROUNDS = 5;
@@ -45,6 +50,9 @@ const MAX_REVISE_ROUNDS = 5;
 function persist(d: Deps, state: RunState): void {
   saveState(d.root, state);
   writeReport(d.root, state);
+  mergeState(d.ledger, state);
+  saveLedger(d.ledgerPath, d.ledger);
+  writeMaster(d.masterDocPath, d.ledger);
 }
 
 const artifactAbs = (d: Deps, rel: string) => join(d.root, '.crashfix', rel);
@@ -87,11 +95,20 @@ function releaseSlot(d: Deps, rec: IssueRecord, slot: Slot): void {
 }
 
 /** connector fetch → triage (deterministic sort by blast radius) → IssueRecords + waveOrder. */
-export async function fetchPhase(d: Deps, state: RunState): Promise<void> {
-  const issues = await d.connector.fetchTopIssues({
-    limit: d.cfg.defaults.limit,
-    filters: d.cfg.filters,
-  });
+export async function fetchPhase(d: Deps, state: RunState, refs?: string[]): Promise<void> {
+  let issues;
+  if (refs && refs.length) {
+    if (!d.connector.fetchIssuesByRef) {
+      throw new Error(`issue source "${d.connector.key}" does not support --issue-url`);
+    }
+    issues = await d.connector.fetchIssuesByRef(refs);
+  } else {
+    const fetched = await d.connector.fetchTopIssues({
+      limit: d.cfg.defaults.limit,
+      filters: d.cfg.filters,
+    });
+    issues = fetched.filter((i) => !isDone(d.ledger, i.id));
+  }
   const ranked = [...issues]
     .sort((a, b) => b.eventCount * b.userCount - a.eventCount * a.userCount)
     .slice(0, d.cfg.defaults.limit);

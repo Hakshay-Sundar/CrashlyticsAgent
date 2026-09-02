@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fetchPhase, runOneIssue, reviewWave, reviseAndReview, publishApproved } from '../../src/orchestrator/phases.js';
 import { newState } from '../../src/state.js';
+import { LEDGER_VERSION, type Ledger } from '../../src/ledger.js';
 
 const nolog = { info() {}, warn() {}, error() {}, child() { return this as any; } };
 
@@ -51,6 +52,9 @@ function fakeDeps(root: string, overrides: Record<string, unknown> = {}) {
     provider: () => ({ name: 'github', openPr: async () => ({ url: 'u', id: '1' }), updatePrBody: async () => {} }),
     http: async () => ({ status: 200, json: {} }),
     launchReview: async (items: any[]) => items.map((i) => ({ issueId: i.record.issue.id, verdict: 'approve' })),
+    ledger: { version: LEDGER_VERSION, entries: {} } as Ledger,
+    ledgerPath: join(root, '.crashfix', 'ledger.json'),
+    masterDocPath: join(root, '.crashfix', 'master.md'),
     ...overrides,
   };
   return d;
@@ -331,5 +335,69 @@ describe('phases', () => {
     expect(state.issues['i1'].status).toBe('FAILED');
     expect(state.issues['i1'].failureStage).toBe('publish');
     expect(state.issues['i1'].notes).toMatch(/publish failed for all repos/);
+  });
+});
+
+describe('fetchPhase ledger integration', () => {
+  it('drops an issue whose ledger entry is terminal', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'cfx-'));
+    const ledger: Ledger = { version: LEDGER_VERSION, entries: {
+      i2: { id: 'i2', url: '', title: 't', type: 'crash', firstSeenAt: 'x', lastSeenAt: 'x',
+        status: 'PUSHED', prUrls: {}, branch: '' },
+    } };
+    const d = fakeDeps(root, { ledger });
+    const state = newState(d.cfg);
+    await fetchPhase(d, state);
+    expect(Object.keys(state.issues)).toEqual(['i1', 'i3']);
+  });
+
+  it('keeps an issue whose ledger entry is FAILED (non-terminal)', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'cfx-'));
+    const ledger: Ledger = { version: LEDGER_VERSION, entries: {
+      i2: { id: 'i2', url: '', title: 't', type: 'crash', firstSeenAt: 'x', lastSeenAt: 'x',
+        status: 'FAILED', prUrls: {}, branch: '' },
+    } };
+    const d = fakeDeps(root, { ledger });
+    const state = newState(d.cfg);
+    await fetchPhase(d, state);
+    expect(Object.keys(state.issues)).toContain('i2');
+  });
+
+  it('with refs, calls fetchIssuesByRef and skips the dedup filter', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'cfx-'));
+    const ledger: Ledger = { version: LEDGER_VERSION, entries: {
+      picked: { id: 'picked', url: '', title: 't', type: 'crash', firstSeenAt: 'x', lastSeenAt: 'x',
+        status: 'PUSHED', prUrls: {}, branch: '' },
+    } };
+    const d = fakeDeps(root, {
+      ledger,
+      connector: {
+        key: 'fake',
+        fetchTopIssues: async () => { throw new Error('should not fetch top issues'); },
+        fetchIssuesByRef: async (refs: string[]) => refs.map((r) => issue(r.split('/').pop()!)),
+      },
+    });
+    const state = newState(d.cfg);
+    await fetchPhase(d, state, ['https://c/issues/picked']);
+    expect(Object.keys(state.issues)).toEqual(['picked']);
+  });
+
+  it('throws when refs are given but the connector has no fetchIssuesByRef', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'cfx-'));
+    const d = fakeDeps(root, {
+      connector: { key: 'fake', fetchTopIssues: async () => [] },
+    });
+    const state = newState(d.cfg);
+    await expect(fetchPhase(d, state, ['x'])).rejects.toThrow(/does not support --issue-url/);
+  });
+
+  it('persist writes the ledger file and the master doc', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'cfx-'));
+    const d = fakeDeps(root);
+    const state = newState(d.cfg);
+    await fetchPhase(d, state);
+    expect(existsSync(join(root, '.crashfix', 'ledger.json'))).toBe(true);
+    expect(existsSync(join(root, '.crashfix', 'master.md'))).toBe(true);
+    expect(readFileSync(join(root, '.crashfix', 'master.md'), 'utf8')).toMatch(/master issue log/);
   });
 });

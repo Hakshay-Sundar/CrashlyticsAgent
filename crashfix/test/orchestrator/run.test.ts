@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { mkdirSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { realGit as git } from '../../src/git.js';
 import { runPipeline, resumePipeline } from '../../src/orchestrator/run.js';
@@ -10,7 +10,12 @@ import { makeNestedRepos } from '../fixtures/repos.js';
 
 const nolog = { info() {}, warn() {}, error() {}, child() { return this as any; } };
 const issue = (id: string) => ({ id, title: `t ${id}`, subtitle: '', type: 'crash', eventCount: 9, userCount: 1, firstSeenVersion: '1', lastSeenVersion: '2', stackTrace: 's', sampleEventUrl: '' });
-const cfg = (): any => ({ repos: [], concurrency: 2, waveSize: 2, validation: 'none', buildParallelism: 2, buildTimeoutSec: 60, defaults: { limit: 25 }, filters: {}, models: {}, issueSource: 'fake' });
+const cfg = (root: string): any => ({
+  repos: [], concurrency: 2, waveSize: 2, validation: 'none', buildParallelism: 2,
+  buildTimeoutSec: 60, defaults: { limit: 25 }, filters: {}, models: {}, issueSource: 'fake',
+  // under .crashfix/ so the uncommitted-changes guard ignores it (and never ~/.crashfix)
+  ledgerPath: join(root, '.crashfix', 'test-ledger.json'),
+});
 
 // Fake worker: analyzer emits a verdict, publisher emits a json block, and the
 // solver/reviser WRITE a real file into repo B's worktree so there is an actual
@@ -38,32 +43,49 @@ function deps(extra: any = {}) {
 describe('runPipeline', () => {
   it('processes 3 issues across 2 waves, pushes real PRs, reaches PUSHED', async () => {
     const { root } = makeNestedRepos();
-    const state = await runPipeline({ root, cfg: cfg(), deps: deps() as any });
+    const state = await runPipeline({ root, cfg: cfg(root), deps: deps() as any });
     expect(Object.values(state.issues).every((r: any) => r.status === 'PUSHED')).toBe(true);
     expect(Object.values(state.issues).every((r: any) => r.prUrls.B === 'https://gh/pr/1')).toBe(true);
     expect(state.waveOrder.length).toBe(2);
     expect(state.phase).toBe('done');
+    expect(existsSync(join(root, '.crashfix', 'test-ledger.json'))).toBe(true);
+    expect(existsSync(join(root, '.crashfix', 'master.md'))).toBe(true);
+  });
+
+  it('skips an issue already terminal in the ledger on a fresh run', async () => {
+    const { root } = makeNestedRepos();
+    const led = join(root, '.crashfix', 'test-ledger.json');
+    mkdirSync(join(root, '.crashfix'), { recursive: true });
+    writeFileSync(led, JSON.stringify({
+      version: 1,
+      entries: { i2: { id: 'i2', url: '', title: 't', type: 'crash',
+        firstSeenAt: 'x', lastSeenAt: 'x', status: 'PUSHED', prUrls: {}, branch: '' } },
+    }));
+    const state = await runPipeline({
+      root, cfg: { ...cfg(root), ledgerPath: led }, deps: deps() as any,
+    });
+    expect(Object.keys(state.issues).sort()).toEqual(['i1', 'i3']);
   });
 
   it('dry-run analyzes only and writes reports, no PRs', async () => {
     const { root } = makeNestedRepos();
-    const state = await runPipeline({ root, cfg: cfg(), deps: deps() as any, dryRun: true });
+    const state = await runPipeline({ root, cfg: cfg(root), deps: deps() as any, dryRun: true });
     expect(Object.values(state.issues).every((r: any) => r.status === 'ANALYZED' || r.status === 'UNFIXABLE')).toBe(true);
     expect(Object.values(state.issues).every((r: any) => Object.keys(r.prUrls).length === 0)).toBe(true);
   });
 
   it('re-running runPipeline on a completed state re-analyzes nothing', async () => {
     const { root } = makeNestedRepos();
-    await runPipeline({ root, cfg: cfg(), deps: deps() as any });
+    await runPipeline({ root, cfg: cfg(root), deps: deps() as any });
     let analyzeCalls = 0;
     const d2 = deps({ runWorker: async (o: any) => { if (o.worker === 'analyzer') analyzeCalls++; return runWorker(o); } });
-    await runPipeline({ root, cfg: cfg(), deps: d2 as any });
+    await runPipeline({ root, cfg: cfg(root), deps: d2 as any });
     expect(analyzeCalls).toBe(0);
   });
 
   it('resumePipeline continues from state.currentWave without re-fetching', async () => {
     const { root } = makeNestedRepos();
-    const state = newState(cfg());
+    const state = newState(cfg(root));
     state.phase = 'wave';
     state.currentWave = 1;
     state.waveOrder = [['i1', 'i2'], ['i3']];
@@ -92,7 +114,7 @@ describe('runPipeline', () => {
       connector: { key: 'fake', fetchTopIssues: async () => [issue('i1'), issue('i2')] },
       launchReview: async (items: any[]) => items.map((i: any) => ({ issueId: i.record.issue.id, verdict: 'skip' })),
     });
-    const state = await runPipeline({ root, cfg: cfg(), deps: d as any });
+    const state = await runPipeline({ root, cfg: cfg(root), deps: d as any });
     expect(state.issues['i1'].status).toBe('IN_REVIEW');
     expect(state.issues['i2'].status).toBe('IN_REVIEW');
     expect(state.issues['i1'].slot).toBeUndefined();
@@ -109,7 +131,7 @@ describe('runPipeline', () => {
         verdict: i.record.issue.id === 'i3' ? 'approve' : 'skip', // skip wave 0, approve wave 1
       })),
     });
-    const state = await runPipeline({ root, cfg: cfg(), deps: d as any });
+    const state = await runPipeline({ root, cfg: cfg(root), deps: d as any });
 
     expect(state.currentWave).toBe(0); // NOT overwritten to 2 by the completed wave 1
     expect(state.issues['i1'].status).toBe('IN_REVIEW');
@@ -133,7 +155,7 @@ describe('runPipeline', () => {
       connector: { key: 'fake', fetchTopIssues: async () => [issue('i1'), issue('i2')] },
       launchReview: async (items: any[]) => items.map((i: any) => ({ issueId: i.record.issue.id, verdict: 'skip' })),
     });
-    await runPipeline({ root, cfg: cfg(), deps: skip as any });
+    await runPipeline({ root, cfg: cfg(root), deps: skip as any });
 
     const out = await resumePipeline(root, deps({
       connector: { key: 'fake', fetchTopIssues: async () => { throw new Error('must not fetch on resume'); } },
@@ -157,7 +179,7 @@ describe('runPipeline', () => {
     await pool.reset(s1, 'crashfix/i1');
     writeFileSync(join(s1.repoDirs.B, 'i1-fix.txt'), 'i1 patch\n');
 
-    const state = newState({ ...cfg(), repos } as any);
+    const state = newState({ ...cfg(root), repos } as any);
     state.phase = 'wave';
     state.currentWave = 0;
     state.waveOrder = [['i1', 'i2']];
