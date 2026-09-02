@@ -72,6 +72,9 @@ describe('runPipeline', () => {
     const state = await runPipeline({ root, cfg: cfg(root), deps: deps() as any, dryRun: true });
     expect(Object.values(state.issues).every((r: any) => r.status === 'ANALYZED' || r.status === 'UNFIXABLE')).toBe(true);
     expect(Object.values(state.issues).every((r: any) => Object.keys(r.prUrls).length === 0)).toBe(true);
+    // dry-run is a preview: never touches the ledger or the master doc
+    expect(existsSync(join(root, '.crashfix', 'test-ledger.json'))).toBe(false);
+    expect(existsSync(join(root, '.crashfix', 'master.md'))).toBe(false);
   });
 
   it('re-running runPipeline on a completed state re-analyzes nothing', async () => {

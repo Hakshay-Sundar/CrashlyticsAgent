@@ -47,12 +47,14 @@ export interface Deps {
 
 const MAX_REVISE_ROUNDS = 5;
 
-function persist(d: Deps, state: RunState): void {
+function persist(d: Deps, state: RunState, opts: { ledger?: boolean } = {}): void {
   saveState(d.root, state);
   writeReport(d.root, state);
-  mergeState(d.ledger, state);
-  saveLedger(d.ledgerPath, d.ledger);
-  writeMaster(d.masterDocPath, d.ledger);
+  if (opts.ledger !== false) {
+    mergeState(d.ledger, state);
+    saveLedger(d.ledgerPath, d.ledger);
+    writeMaster(d.masterDocPath, d.ledger);
+  }
 }
 
 const artifactAbs = (d: Deps, rel: string) => join(d.root, '.crashfix', rel);
@@ -95,7 +97,12 @@ function releaseSlot(d: Deps, rec: IssueRecord, slot: Slot): void {
 }
 
 /** connector fetch → triage (deterministic sort by blast radius) → IssueRecords + waveOrder. */
-export async function fetchPhase(d: Deps, state: RunState, refs?: string[]): Promise<void> {
+export async function fetchPhase(
+  d: Deps,
+  state: RunState,
+  refs?: string[],
+  opts?: { ledger?: boolean },
+): Promise<void> {
   let issues;
   if (refs && refs.length) {
     if (!d.connector.fetchIssuesByRef) {
@@ -131,7 +138,7 @@ export async function fetchPhase(d: Deps, state: RunState, refs?: string[]): Pro
   });
 
   state.phase = 'wave';
-  persist(d, state);
+  persist(d, state, opts);
 }
 
 /** acquire slot → analyze → (solve) → IN_REVIEW. Slot stays HELD for revise/publish. */

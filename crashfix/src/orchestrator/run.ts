@@ -139,7 +139,7 @@ async function core(
   try {
     // Only ever fetch from a pristine state — fetchPhase wipes state.issues.
     if (state.phase === 'fetch') {
-      await fetchPhase(d, state, opts.refs);
+      await fetchPhase(d, state, opts.refs, { ledger: !opts.dryRun });
       state.phase = 'wave';
       saveState(root, state);
     }
