@@ -56,4 +56,25 @@ describe('loadConfig', () => {
     expect(merged2.waveSize).toBe(10); // Clamped to max
     expect(merged2.concurrency).toBe(8); // Clamped to min(20, 10, 8) = 8
   });
+
+  it('defaults masterDocPath and leaves ledgerPath undefined', () => {
+    const dir = writeConfig({ firebase: { projectId: 'p', appId: 'a' } });
+    const cfg = loadConfig(dir);
+    expect(cfg.masterDocPath).toBe('.crashfix/master.md');
+    expect(cfg.ledgerPath).toBeUndefined();
+  });
+
+  it('accepts masterDocPath and ledgerPath overrides without an unknown-key warning', () => {
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const dir = writeConfig({
+      firebase: { projectId: 'p', appId: 'a' },
+      masterDocPath: 'docs/CRASHFIX.md',
+      ledgerPath: '~/.crashfix/led.json',
+    });
+    const cfg = loadConfig(dir);
+    expect(cfg.masterDocPath).toBe('docs/CRASHFIX.md');
+    expect(cfg.ledgerPath).toBe('~/.crashfix/led.json');
+    expect(warnSpy).not.toHaveBeenCalled();
+    warnSpy.mockRestore();
+  });
 });

@@ -37,6 +37,8 @@ const KNOWN_TOP_LEVEL_KEYS = [
   'models',
   'defaults',
   'filters',
+  'masterDocPath',
+  'ledgerPath',
 ];
 
 const mcpStdio = z.object({
@@ -68,6 +70,8 @@ const schema = z.object({
   buildParallelism: z.number().int().min(1).max(4).default(2),
   buildTimeoutSec: z.number().int().min(60).default(1800),
   cleanExcludes: z.array(z.string()).default(['.gradle/', 'local.properties', '*.iml']),
+  masterDocPath: z.string().default('.crashfix/master.md'),
+  ledgerPath: z.string().optional(),
   models: z
     .object({
       orchestrator: z.string(),
@@ -114,6 +118,7 @@ export interface RunCliOptions {
   dryRun?: boolean;
   yes?: boolean;
   force?: boolean;
+  issueUrl?: string[];
 }
 
 export function loadConfig(root: string): CrashfixConfig {
