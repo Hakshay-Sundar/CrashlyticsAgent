@@ -29,7 +29,8 @@ export const TERMINAL_STATUSES: ReadonlySet<IssueStatus> = new Set<IssueStatus>(
 
 const sanitize = (s: string) => s.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
 
-const expandTilde = (p: string) => (p.startsWith('~') ? join(homedir(), p.slice(1)) : p);
+const expandTilde = (p: string) =>
+  p === '~' || p.startsWith('~/') ? join(homedir(), p.slice(1)) : p;
 
 export function ledgerPathFor(cfg: CrashfixConfig, root: string): string {
   if (cfg.ledgerPath) {
@@ -58,6 +59,9 @@ export function loadLedger(path: string): Ledger {
 
 export function saveLedger(path: string, ledger: Ledger): void {
   mkdirSync(dirname(path), { recursive: true });
+  // ponytail: whole-file rewrite per persist; safe single-process (sync path),
+  // last-writer-wins across processes sharing a ledger key — add read-merge or a
+  // lock only if concurrent crashfix processes on one Firebase project become real
   const tmp = path + '.tmp';
   writeFileSync(tmp, JSON.stringify(ledger, null, 2));
   renameSync(tmp, path);
@@ -70,14 +74,14 @@ export function mergeState(ledger: Ledger, state: RunState): Ledger {
     const prev = ledger.entries[id];
     ledger.entries[id] = {
       id,
-      url: rec.issue.sampleEventUrl ?? prev?.url ?? '',
+      url: rec.issue.sampleEventUrl || prev?.url || '',
       title: rec.issue.title,
       type: rec.issue.type,
       firstSeenAt: prev?.firstSeenAt ?? now,
       lastSeenAt: now,
       status: rec.status,
-      prUrls: rec.prUrls ?? {},
-      branch: rec.branch ?? prev?.branch ?? '',
+      prUrls: { ...(rec.prUrls ?? {}) },
+      branch: rec.branch || prev?.branch || '',
     };
   }
   return ledger;

@@ -116,9 +116,12 @@ export async function fetchPhase(
     });
     issues = fetched.filter((i) => !isDone(d.ledger, i.id));
   }
-  const ranked = [...issues]
-    .sort((a, b) => b.eventCount * b.userCount - a.eventCount * a.userCount)
-    .slice(0, d.cfg.defaults.limit);
+  // Explicit refs are taken as-is: no blast-radius re-rank, no limit cap.
+  const ranked = refs && refs.length
+    ? [...issues]
+    : [...issues]
+        .sort((a, b) => b.eventCount * b.userCount - a.eventCount * a.userCount)
+        .slice(0, d.cfg.defaults.limit);
 
   state.issues = {};
   state.waveOrder = [];

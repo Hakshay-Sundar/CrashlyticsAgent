@@ -1,5 +1,5 @@
 import type { Issue } from '../types.js';
-import { parseIssueRef, type Connector, type ConnectorDeps, type ConnectorFactory, type FetchParams } from './contract.js';
+import { parseIssueRef, type ConnectorFactory, type FetchParams } from './contract.js';
 
 export function fakeConnector(issues: Issue[]): ConnectorFactory {
   return () => ({
@@ -13,7 +13,9 @@ export function fakeConnector(issues: Issue[]): ConnectorFactory {
     },
     async fetchIssuesByRef(refs: string[]): Promise<Issue[]> {
       const ids = new Set(refs.map(parseIssueRef));
-      return issues.filter((i) => ids.has(i.id) || refs.some((r) => i.sampleEventUrl.includes(r)));
+      return issues.filter(
+        (i) => ids.has(i.id) || refs.some((r) => r !== '' && i.sampleEventUrl.includes(r)),
+      );
     },
   });
 }

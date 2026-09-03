@@ -51,8 +51,9 @@ Issues are processed in **waves** of `waveSize` issues; each wave is fully analy
 
 Every issue crashfix has ever touched is recorded in a **ledger** at
 `~/.crashfix/ledger-<project>_<app>.json` (override with `ledgerPath` in the
-config). The ledger lives outside your repo and outside `.crashfix/`, so
-`crashfix clean` never touches it.
+config); with no `firebase` block configured the filename is
+`ledger-default.json`. The ledger lives outside your repo and outside
+`.crashfix/`, so `crashfix clean` never touches it.
 
 - **No re-work:** on `crashfix run`, any issue the ledger already has in a
   terminal state (`PUSHED`, `PARTIALLY_PUSHED`, `REJECTED`, `UNFIXABLE`) is
@@ -62,7 +63,10 @@ config). The ledger lives outside your repo and outside `.crashfix/`, so
 - **Master document:** after every state change crashfix rewrites a single
   Markdown file (`masterDocPath`, default `.crashfix/master.md`) listing every
   ledger issue with its current status, PR links and first/last-seen dates.
-  `crashfix status` prints it.
+  `crashfix status` prints it. If `masterDocPath` points outside `.crashfix/`,
+  every run rewrites it with a fresh timestamp and leaves the repo dirty, so
+  commit it after a run (or pass `--force`) or the next run's
+  uncommitted-changes guard will complain.
 
 ## Reviewing a wave
 
@@ -120,7 +124,7 @@ Approved issues are published immediately; rejected issues have their branch del
 | `filters.minEventCount` | `null` | drop issues with fewer events |
 | `filters.since` | `null` | only issues seen since this date |
 | `masterDocPath` | `.crashfix/master.md` | where the master issue log is written (relative to the config dir) |
-| `ledgerPath` | `~/.crashfix/ledger-<project>_<app>.json` | where the cross-run issue ledger is stored |
+| `ledgerPath` | `~/.crashfix/ledger-<project>_<app>.json` (`ledger-default.json` with no `firebase` block) | where the cross-run issue ledger is stored |
 
 CLI flags (`--limit`, `--type`, `--min-version`, `--min-events`, `--since`, `--concurrency`, `--wave-size`, `--source`) override the matching config value for that run.
 

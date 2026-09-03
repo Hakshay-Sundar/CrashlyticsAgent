@@ -4,13 +4,17 @@
 // three terminal paths: pushed, revised-then-pushed, rejected. The rejected
 // issue sits in wave 0 so the following wave proves its slot is reusable.
 import { describe, it, expect } from 'vitest';
-import { existsSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { realGit as git } from '../../src/git.js';
 import { runPipeline } from '../../src/orchestrator/run.js';
 import { makeNestedRepos, seedSource } from '../fixtures/repos.js';
 
 const nolog = { info() {}, warn() {}, error() {}, child() { return this as any; } };
+// ledger lives OUTSIDE root: no repo dir the dirty-check scans, and it must
+// survive `crashfix clean` (which wipes <root>/.crashfix/)
+const ledgerTmp = () => join(mkdtempSync(join(tmpdir(), 'cfx-led-')), 'ledger.json');
 const mk = (id: string, over = {}) => ({
   id, title: `crash ${id}`, subtitle: '', type: 'crash', eventCount: 50, userCount: 3,
   firstSeenVersion: '4.0.0', lastSeenVersion: '4.3.0', stackTrace: 'NPE at Feature.kt',
@@ -41,8 +45,7 @@ describe('crashfix e2e', () => {
     const cfg: any = {
       repos: [], concurrency: 2, waveSize: 2, validation: 'none', buildParallelism: 2,
       buildTimeoutSec: 60, defaults: { limit: 25 }, filters: {}, models: {}, issueSource: 'fake',
-      // temp ledger under .crashfix/ so the run never touches ~/.crashfix/
-      ledgerPath: join(root, '.crashfix', 'test-ledger.json'),
+      ledgerPath: ledgerTmp(),
     };
 
     const state = await runPipeline({
@@ -122,8 +125,8 @@ describe('crashfix e2e', () => {
   it('writes a ledger + master doc and skips resolved issues on a second run', async () => {
     const { root } = makeNestedRepos();
     seedSource(root);
-    // ledger under .crashfix/ (dirty-check-excluded); absolute so run 2 can share it
-    const ledgerPath = join(root, '.crashfix', 'ext-ledger.json');
+    // ledger outside root so run 2 (a fresh repo) can share it AND it survives a clean
+    const ledgerPath = ledgerTmp();
     const baseCfg: any = {
       repos: [], concurrency: 2, waveSize: 5, validation: 'none', buildParallelism: 2,
       buildTimeoutSec: 60, defaults: { limit: 25 }, filters: {}, models: {}, issueSource: 'fake',
@@ -159,6 +162,10 @@ describe('crashfix e2e', () => {
     expect(existsSync(join(root, '.crashfix', 'master.md'))).toBe(true);
     const ledger = JSON.parse(readFileSync(ledgerPath, 'utf8'));
     expect(ledger.entries.k1.status).toBe('PUSHED');
+
+    // `crashfix clean` wipes <root>/.crashfix/ — the ledger lives outside it and survives
+    rmSync(join(root, '.crashfix'), { recursive: true, force: true });
+    expect(existsSync(ledgerPath)).toBe(true);
 
     // Second run in a fresh repo but pointed at the SAME external ledger:
     // k1 is already PUSHED there, so only k2 should be processed.

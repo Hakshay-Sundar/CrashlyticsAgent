@@ -93,7 +93,19 @@ export async function runPipeline(o: RunPipelineOptions): Promise<RunState> {
   }
 
   const cfg = { ...o.cfg, repos: repos as CrashfixConfig['repos'] };
-  const state = loadState(o.root) ?? newState(cfg);
+  const loaded = loadState(o.root);
+  // Explicit --issue-url must not be swallowed by a persisted state: a finished
+  // state (phase 'done') skips fetchPhase entirely, so the refs would never be
+  // read. Discard a completed state and start fresh; refuse if a run is mid-flight.
+  let state: RunState;
+  if (o.refs?.length && loaded) {
+    if (loaded.phase !== 'done') {
+      throw new Error('a run is already in progress (.crashfix/state.json) — finish it with `crashfix resume`, or run `crashfix clean`, before using --issue-url');
+    }
+    state = newState(cfg);
+  } else {
+    state = loaded ?? newState(cfg);
+  }
   return core(o.root, cfg, base, o.deps, state, {
     dryRun: o.dryRun, autoApprove: o.autoApprove, refs: o.refs,
   });
@@ -127,6 +139,7 @@ async function core(
   const sem = new Semaphore(cfg.buildParallelism);
   const ledgerPath = ledgerPathFor(cfg, root);
   const ledger = loadLedger(ledgerPath);
+  // resume from a pre-upgrade state.json has no masterDocPath
   const masterRel = cfg.masterDocPath ?? '.crashfix/master.md';
   const masterDocPath = isAbsolute(masterRel) ? masterRel : join(root, masterRel);
   const d: Deps = { ...raw, root, cfg, pool, sem, base, ledger, ledgerPath, masterDocPath };

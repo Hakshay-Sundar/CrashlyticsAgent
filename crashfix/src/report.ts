@@ -3,6 +3,9 @@ import { dirname, join } from 'node:path';
 import type { RunState } from './types.js';
 import type { Ledger } from './ledger.js';
 
+/** Markdown-table cell escape: `|` → `\|`, newlines → space. */
+const cell = (s: unknown) => String(s ?? '').replace(/\|/g, '\\|').replace(/\n/g, ' ');
+
 export function slugify(title: string, issueId: string): string {
   const base = title.normalize('NFKD').replace(/[^\x00-\x7F]/g, '')
     .toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
@@ -17,7 +20,6 @@ export function renderReport(state: RunState): string {
   const summary = ['## Summary', '', ...Object.entries(counts).map(([k, v]) => `- ${k}: ${v}`), ''];
   const header = '| Issue | Type | Events | Users | Status | Branch | Slot | Repos | Reports | PRs | Build | Notes |';
   const sep = '|' + '---|'.repeat(12);
-  const cell = (s: unknown) => String(s ?? '').replace(/\|/g, '\\|').replace(/\n/g, ' ');
   const rows = recs.map((r) => {
     const prs = Object.entries(r.prUrls).map(([repo, url]) => `[${repo}](${url})`).join(' ');
     const reports = [r.reportPath && `[analysis](${r.reportPath})`, r.reviewPath && `[review](${r.reviewPath})`]
@@ -43,7 +45,6 @@ export function writeReport(root: string, state: RunState): void {
 }
 
 export function renderMaster(ledger: Ledger): string {
-  const esc = (s: unknown) => String(s ?? '').replace(/\|/g, '\\|').replace(/\n/g, ' ');
   const entries = Object.values(ledger.entries)
     .sort((a, b) => b.lastSeenAt.localeCompare(a.lastSeenAt));
 
@@ -56,7 +57,7 @@ export function renderMaster(ledger: Ledger): string {
   const rows = entries.map((e) => {
     const prs = Object.entries(e.prUrls).map(([repo, url]) => `[${repo}](${url})`).join(' ');
     const link = e.url ? `[link](${e.url})` : '';
-    return `| ${esc(e.id)} — ${esc(e.title)} | ${esc(e.type)} | ${esc(e.status)} | ` +
+    return `| ${cell(e.id)} — ${cell(e.title)} | ${cell(e.type)} | ${cell(e.status)} | ` +
       `${e.firstSeenAt.slice(0, 10)} | ${e.lastSeenAt.slice(0, 10)} | ${prs} | ${link} |`;
   });
 

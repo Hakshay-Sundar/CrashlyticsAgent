@@ -11,6 +11,7 @@ describe('fakeConnector.fetchIssuesByRef', () => {
   const issues = [
     issue({ id: 'a', sampleEventUrl: 'https://c/issues/a' }),
     issue({ id: 'b', sampleEventUrl: 'https://c/issues/b' }),
+    issue({ id: 'b2', sampleEventUrl: 'https://c/x/b2-detail' }),
   ];
   const c = fakeConnector(issues)({} as any);
 
@@ -20,8 +21,10 @@ describe('fakeConnector.fetchIssuesByRef', () => {
   });
 
   it('matches by raw url substring', async () => {
-    const out = await c.fetchIssuesByRef!(['https://c/issues/b']);
-    expect(out.map((i) => i.id)).toEqual(['b']);
+    // 'b2-detail' isn't a URL, so parseIssueRef leaves it as-is and it matches
+    // no id — only the sampleEventUrl `.includes` branch can find b2.
+    const out = await c.fetchIssuesByRef!(['b2-detail']);
+    expect(out.map((i) => i.id)).toEqual(['b2']);
   });
 
   it('returns nothing for an unknown ref', async () => {

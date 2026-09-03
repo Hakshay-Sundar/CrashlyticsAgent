@@ -50,6 +50,7 @@ describe('loadLedger / saveLedger', () => {
     };
     saveLedger(p, led);
     expect(existsSync(p)).toBe(true);
+    expect(existsSync(p + '.tmp')).toBe(false); // atomic write cleaned up
     expect(loadLedger(p)).toEqual(led);
   });
 

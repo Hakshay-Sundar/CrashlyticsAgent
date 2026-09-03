@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
-import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { realGit as git } from '../../src/git.js';
 import { runPipeline, resumePipeline } from '../../src/orchestrator/run.js';
@@ -10,11 +11,13 @@ import { makeNestedRepos } from '../fixtures/repos.js';
 
 const nolog = { info() {}, warn() {}, error() {}, child() { return this as any; } };
 const issue = (id: string) => ({ id, title: `t ${id}`, subtitle: '', type: 'crash', eventCount: 9, userCount: 1, firstSeenVersion: '1', lastSeenVersion: '2', stackTrace: 's', sampleEventUrl: '' });
-const cfg = (root: string): any => ({
+const ledgerTmp = () => join(mkdtempSync(join(tmpdir(), 'cfx-led-')), 'ledger.json');
+const cfg = (_root: string): any => ({
   repos: [], concurrency: 2, waveSize: 2, validation: 'none', buildParallelism: 2,
   buildTimeoutSec: 60, defaults: { limit: 25 }, filters: {}, models: {}, issueSource: 'fake',
-  // under .crashfix/ so the uncommitted-changes guard ignores it (and never ~/.crashfix)
-  ledgerPath: join(root, '.crashfix', 'test-ledger.json'),
+  // ledger lives OUTSIDE root: outside any repo dir the dirty-check scans, and it
+  // must survive `crashfix clean` (which wipes <root>/.crashfix/)
+  ledgerPath: ledgerTmp(),
 });
 
 // Fake worker: analyzer emits a verdict, publisher emits a json block, and the
@@ -43,19 +46,19 @@ function deps(extra: any = {}) {
 describe('runPipeline', () => {
   it('processes 3 issues across 2 waves, pushes real PRs, reaches PUSHED', async () => {
     const { root } = makeNestedRepos();
-    const state = await runPipeline({ root, cfg: cfg(root), deps: deps() as any });
+    const c = cfg(root);
+    const state = await runPipeline({ root, cfg: c, deps: deps() as any });
     expect(Object.values(state.issues).every((r: any) => r.status === 'PUSHED')).toBe(true);
     expect(Object.values(state.issues).every((r: any) => r.prUrls.B === 'https://gh/pr/1')).toBe(true);
     expect(state.waveOrder.length).toBe(2);
     expect(state.phase).toBe('done');
-    expect(existsSync(join(root, '.crashfix', 'test-ledger.json'))).toBe(true);
+    expect(existsSync(c.ledgerPath)).toBe(true);
     expect(existsSync(join(root, '.crashfix', 'master.md'))).toBe(true);
   });
 
   it('skips an issue already terminal in the ledger on a fresh run', async () => {
     const { root } = makeNestedRepos();
-    const led = join(root, '.crashfix', 'test-ledger.json');
-    mkdirSync(join(root, '.crashfix'), { recursive: true });
+    const led = ledgerTmp();
     writeFileSync(led, JSON.stringify({
       version: 1,
       entries: { i2: { id: 'i2', url: '', title: 't', type: 'crash',
@@ -69,21 +72,50 @@ describe('runPipeline', () => {
 
   it('dry-run analyzes only and writes reports, no PRs', async () => {
     const { root } = makeNestedRepos();
-    const state = await runPipeline({ root, cfg: cfg(root), deps: deps() as any, dryRun: true });
+    const c = cfg(root);
+    const state = await runPipeline({ root, cfg: c, deps: deps() as any, dryRun: true });
     expect(Object.values(state.issues).every((r: any) => r.status === 'ANALYZED' || r.status === 'UNFIXABLE')).toBe(true);
     expect(Object.values(state.issues).every((r: any) => Object.keys(r.prUrls).length === 0)).toBe(true);
     // dry-run is a preview: never touches the ledger or the master doc
-    expect(existsSync(join(root, '.crashfix', 'test-ledger.json'))).toBe(false);
+    expect(existsSync(c.ledgerPath)).toBe(false);
     expect(existsSync(join(root, '.crashfix', 'master.md'))).toBe(false);
   });
 
   it('re-running runPipeline on a completed state re-analyzes nothing', async () => {
     const { root } = makeNestedRepos();
-    await runPipeline({ root, cfg: cfg(root), deps: deps() as any });
+    const c = cfg(root);
+    await runPipeline({ root, cfg: c, deps: deps() as any });
     let analyzeCalls = 0;
     const d2 = deps({ runWorker: async (o: any) => { if (o.worker === 'analyzer') analyzeCalls++; return runWorker(o); } });
-    await runPipeline({ root, cfg: cfg(root), deps: d2 as any });
+    await runPipeline({ root, cfg: c, deps: d2 as any });
     expect(analyzeCalls).toBe(0);
+  });
+
+  it('--issue-url after a completed run discards the done state and processes the ref', async () => {
+    const { root } = makeNestedRepos();
+    const c = cfg(root);
+    await runPipeline({ root, cfg: c, deps: deps() as any });
+    const d = deps({
+      connector: {
+        key: 'fake',
+        fetchTopIssues: async () => { throw new Error('must not fetch top issues'); },
+        fetchIssuesByRef: async (refs: string[]) => refs.map((r) => issue(r)),
+      },
+    });
+    const state = await runPipeline({ root, cfg: c, deps: d as any, refs: ['ix9'] });
+    expect(Object.keys(state.issues)).toContain('ix9');
+    expect(state.issues['ix9'].status).toBe('PUSHED');
+  });
+
+  it('--issue-url throws when a run is already in progress', async () => {
+    const { root } = makeNestedRepos();
+    const c = cfg(root);
+    const st = newState(c);
+    st.phase = 'wave';
+    saveState(root, st);
+    await expect(
+      runPipeline({ root, cfg: c, deps: deps() as any, refs: ['ix9'] }),
+    ).rejects.toThrow(/already in progress/);
   });
 
   it('resumePipeline continues from state.currentWave without re-fetching', async () => {
